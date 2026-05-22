@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+env/
+*.egg-info/
+
+# Env files
+.env
+backend/.env
+frontend/.env
+frontend/.env.local
+
+# Database (legacy SQLite — now using Supabase)
+*.db
+
+# Node
+node_modules/
+dist/
+.cache/
+
+# Vercel
+.vercel/
+
+# OS
+.DS_Store
+Thumbs.db
