@@ -1,163 +1,112 @@
 import { useEffect, useState, useCallback } from "react";
-import { supabase } from "./supabase";
-import HourlyChart   from "./components/HourlyChart";
-import ZoneHeatmap   from "./components/ZoneHeatmap";
-import ActivityFeed  from "./components/ActivityFeed";
-import TrendCard     from "./components/TrendCard";
-import OccupancyCard from "./components/OccupancyCard";
+import { api } from "./api";
+import LiveWidget      from "./components/LiveWidget";
+import TodayStats      from "./components/TodayStats";
+import HeatmapGrid     from "./components/HeatmapGrid";
+import TrafficChart    from "./components/TrafficChart";
+import InsightsSection from "./components/InsightsSection";
+import DailySummary    from "./components/DailySummary";
+import ChatInterface   from "./components/ChatInterface";
 
-const SLOW_MS = 30_000;
-
-function fmt(n) { return n == null ? "—" : String(n); }
+const REFRESH_MS = 30_000;
 
 export default function App() {
-  const [live,     setLive]     = useState({ people_count: 0, created_at: null });
-  const [prev,     setPrev]     = useState(null);   // second-latest reading for trend
-  const [hourly,   setHourly]   = useState([]);
-  const [zones,    setZones]    = useState(null);
-  const [stats,    setStats]    = useState(null);
-  const [feed,     setFeed]     = useState([]);
+  const [live,     setLive]     = useState(null);
+  const [today,    setToday]    = useState(null);
+  const [insights, setInsights] = useState(null);
+  const [summary,  setSummary]  = useState(null);
+  const [weather,  setWeather]  = useState(null);
   const [online,   setOnline]   = useState(false);
+  const [store,    setStore]    = useState("RetailIQ");
 
-  const fetchLive = useCallback(async () => {
-    const { data, error } = await supabase
-      .from("detections")
-      .select("people_count, created_at, zone_left, zone_center, zone_right")
-      .order("created_at", { ascending: false })
-      .limit(2);
-    if (!error && data?.length) {
-      setLive(data[0]);
-      if (data[1]) setPrev(data[1]);
+  const refresh = useCallback(async () => {
+    try {
+      const [l, t, i, s, w, c] = await Promise.all([
+        api.live(), api.today(), api.insights(),
+        api.summary(), api.weather(), api.config(),
+      ]);
+      setLive(l);    setToday(t); setInsights(i);
+      setSummary(s); setWeather(w);
+      if (c?.store_name) setStore(c.store_name);
       setOnline(true);
-    } else { setOnline(false); }
-  }, []);
-
-  const fetchSlow = useCallback(async () => {
-    const [h, z, s, f] = await Promise.all([
-      supabase.from("hourly_today").select("*"),
-      supabase.from("zone_totals_today").select("*").single(),
-      supabase.from("stats_today").select("*").single(),
-      supabase.from("detections")
-        .select("people_count, created_at, zone_left, zone_center, zone_right")
-        .order("created_at", { ascending: false })
-        .limit(12),
-    ]);
-    if (!h.error) setHourly(h.data ?? []);
-    if (!z.error) setZones(z.data);
-    if (!s.error) setStats(s.data);
-    if (!f.error) setFeed(f.data ?? []);
+    } catch {
+      setOnline(false);
+    }
   }, []);
 
   useEffect(() => {
-    fetchLive();
-    fetchSlow();
+    refresh();
+    const id = setInterval(refresh, REFRESH_MS);
+    return () => clearInterval(id);
+  }, [refresh]);
 
-    const channel = supabase
-      .channel("detections-live")
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "detections" },
-        (payload) => {
-          setPrev(live);
-          setLive(payload.new);
-          setOnline(true);
-          setFeed(prev => [payload.new, ...prev].slice(0, 12));
-        })
-      .subscribe();
-
-    const t = setInterval(fetchSlow, SLOW_MS);
-    return () => { supabase.removeChannel(channel); clearInterval(t); };
-  }, [fetchLive, fetchSlow]);
-
-  // Derived numbers
-  const totalZone  = (zones?.total_left ?? 0) + (zones?.total_center ?? 0) + (zones?.total_right ?? 0);
-  const avgHourly  = hourly.length
-    ? Math.round(hourly.reduce((s, h) => s + Number(h.avg_count), 0) / hourly.length * 10) / 10
-    : 0;
-
-  const trend = prev != null
-    ? live.people_count - prev.people_count
-    : 0;
-
-  const today = new Date().toLocaleDateString("en-AU", { weekday:"long", day:"numeric", month:"long", year:"numeric" });
+  const now = new Date();
+  const dateStr = now.toLocaleDateString("en-AU", {
+    weekday: "long", day: "numeric", month: "long", year: "numeric"
+  });
+  const timeStr = now.toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit" });
 
   return (
-    <div className="dashboard">
-      {/* ── Header ── */}
-      <header className="header">
-        <div className="header-left">
-          <div className="logo"><span>Retail</span>IQ</div>
-          <div className="header-date">{today}</div>
-        </div>
-        <div className="header-right">
-          <div className={`status-badge ${online ? "live" : ""}`}>
-            <span className="status-dot" />
-            {online ? "Live" : "Connecting…"}
-          </div>
+    <div className="shell">
+      {/* ── Topbar ── */}
+      <header className="topbar">
+        <div className="topbar-logo"><span>Retail</span>IQ</div>
+        <div className="topbar-meta">
+          <span className="topbar-store">{store}</span>
+          <span>{dateStr} · {timeStr}</span>
+          {weather?.condition && (
+            <span>{weather.icon} {weather.condition} · {weather.temperature}°C</span>
+          )}
+          <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span className={`live-dot ${online ? "" : "offline-dot"}`} />
+            {online ? "Live" : "Offline"}
+          </span>
         </div>
       </header>
 
-      {/* ── Top metric strip ── */}
-      <div className="metrics-strip">
-        <div className="metric-card highlight">
-          <div className="metric-label">Live Count</div>
-          <div className="metric-value">{live.people_count}</div>
-          <div className="metric-change">
-            {trend > 0 ? `▲ +${trend} since last scan` : trend < 0 ? `▼ ${trend} since last scan` : "No change"}
+      <main className="content">
+        {/* ── Section 1: Raw Data ── */}
+        <div className="section">
+          <div className="section-header">
+            <div className="section-title">Section 1 — Live &amp; Raw Data</div>
+          </div>
+
+          <LiveWidget live={live} weather={weather} />
+          <TodayStats stats={today} />
+
+          <div className="bottom-row">
+            <TrafficChart />
+            <HeatmapGrid />
           </div>
         </div>
-        <div className="metric-card">
-          <div className="metric-label">Total Detections</div>
-          <div className="metric-value">{fmt(stats?.total_detections)}</div>
-          <div className="metric-change">Today</div>
-        </div>
-        <div className="metric-card">
-          <div className="metric-label">Peak Count</div>
-          <div className="metric-value">{fmt(stats?.peak_count)}</div>
-          <div className="metric-change">Highest reading today</div>
-        </div>
-        <div className="metric-card">
-          <div className="metric-label">Peak Hour</div>
-          <div className="metric-value" style={{fontSize:"1.4rem"}}>{stats?.peak_hour ?? "—"}</div>
-          <div className="metric-change">Busiest hour today</div>
-        </div>
-        <div className="metric-card">
-          <div className="metric-label">Avg Occupancy</div>
-          <div className="metric-value">{avgHourly}</div>
-          <div className="metric-change">Per hour average</div>
-        </div>
-      </div>
 
-      {/* ── Main grid ── */}
-      <div className="main-grid">
-        <HourlyChart hourly={hourly} />
-        <div className="right-col">
-          <ZoneHeatmap zones={zones} totalZone={totalZone} />
-          <ActivityFeed feed={feed} />
-        </div>
-      </div>
+        <div className="divider" />
 
-      {/* ── Bottom strip ── */}
-      <div className="bottom-strip">
-        <TrendCard live={live} prev={prev} trend={trend} />
-        <OccupancyCard live={live} stats={stats} />
-        <div className="card">
-          <div className="card-title">Zone Split — Today</div>
-          {["Left","Centre","Right"].map((z, i) => {
-            const key = ["total_left","total_center","total_right"][i];
-            const val = zones?.[key] ?? 0;
-            const pct = totalZone ? Math.round(val / totalZone * 100) : 0;
-            return (
-              <div key={z} style={{marginBottom:10}}>
-                <div style={{display:"flex",justifyContent:"space-between",fontSize:"0.75rem",fontWeight:600,marginBottom:4}}>
-                  <span>{z}</span><span>{pct}%</span>
-                </div>
-                <div className="occ-bar-track">
-                  <div className="occ-bar-fill" style={{width:`${pct}%`, background: i===0?"#FBBF24":i===1?"#F59E0B":"#F97316"}} />
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
+        {/* ── Section 2: AI Insights ── */}
+        <InsightsSection
+          insights={insights}
+          onRefresh={async () => {
+            const fresh = await api.refreshInsights();
+            setInsights(fresh);
+          }}
+        />
+
+        <div className="divider" />
+
+        {/* ── Section 3: Daily Summary ── */}
+        <DailySummary
+          summary={summary}
+          onGenerate={async () => {
+            const r = await api.generateSummary();
+            setSummary({ summary: r.summary, generated_at: new Date().toISOString() });
+          }}
+        />
+
+        <div className="divider" />
+
+        {/* ── Section 4: Chat ── */}
+        <ChatInterface />
+      </main>
     </div>
   );
 }

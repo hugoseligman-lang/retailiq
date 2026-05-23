@@ -1,51 +1,96 @@
 import time
 import threading
-from datetime import datetime
+from datetime import datetime, date
 from camera import capture_frame
 from vision_api import detect_people
-from supabase_db import insert_detection
+import database as db
+import weather as wx
 from config import CAPTURE_INTERVAL
 
-_stop_event = threading.Event()
+_stop   = threading.Event()
+_latest = {}
+_lock   = threading.Lock()
+_last_date = date.today()
+_last_weather_fetch = 0
+_current_weather = {}
+WEATHER_INTERVAL = 1800  # refresh weather every 30 min
 
 
-def _run_loop():
-    print("[detector] Detection loop started")
-    while not _stop_event.is_set():
+def get_latest() -> dict:
+    with _lock:
+        return dict(_latest)
+
+
+def get_current_weather() -> dict:
+    return dict(_current_weather)
+
+
+def _maybe_refresh_weather():
+    global _last_weather_fetch, _current_weather
+    now = time.time()
+    if now - _last_weather_fetch > WEATHER_INTERVAL:
+        w = wx.fetch_current()
+        if w:
+            _current_weather = w
+            db.insert_weather(w)
+            _last_weather_fetch = now
+
+
+def _maybe_midnight_rollover():
+    global _last_date
+    today = date.today()
+    if today != _last_date:
+        print(f"[detector] Midnight rollover: {_last_date} → {today}")
+        dow = _last_date.weekday()
         try:
+            import holidays as hols
+            from config import STORE_STATE
+            au = hols.Australia(state=STORE_STATE, years=_last_date.year)
+            is_hol = _last_date in au
+        except Exception:
+            is_hol = False
+        db.midnight_rollover(dow, is_hol)
+        _last_date = today
+
+
+def _run():
+    print("[detector] Detection loop started")
+    while not _stop.is_set():
+        try:
+            _maybe_midnight_rollover()
+            _maybe_refresh_weather()
+
             frame = capture_frame()
             if frame is None:
-                print("[detector] No frame — skipping cycle")
+                print("[detector] No frame")
                 time.sleep(CAPTURE_INTERVAL)
                 continue
 
-            result = detect_people(frame)
-            insert_detection(
-                result["people_count"],
-                result["zone_left"],
-                result["zone_center"],
-                result["zone_right"],
-            )
+            result = detect_people(frame, _current_weather)
+            db.insert_detection(result)
 
-            ts = datetime.utcnow().strftime("%H:%M:%S")
-            print(
-                f"[{ts}] people={result['people_count']} "
-                f"L={result['zone_left']} C={result['zone_center']} R={result['zone_right']}"
-            )
+            result["last_updated"] = datetime.utcnow().isoformat() + "Z"
+            result["weather"] = _current_weather
+            with _lock:
+                _latest.update(result)
 
-        except Exception as exc:
-            print(f"[detector] Error: {exc}")
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] "
+                  f"in={result['people_count']} pass={result['passerby_count']} "
+                  f"queue={result['queue_length']} zone={result['busiest_zone']}")
+
+        except Exception as e:
+            print(f"[detector] Error: {e}")
 
         time.sleep(CAPTURE_INTERVAL)
 
-    print("[detector] Detection loop stopped")
+    print("[detector] Stopped")
 
 
-def start(daemon: bool = True):
-    t = threading.Thread(target=_run_loop, daemon=daemon)
+def start(daemon=True):
+    t = threading.Thread(target=_run, daemon=daemon)
     t.start()
     return t
 
 
 def stop():
-    _stop_event.set()
+    _stop.set()

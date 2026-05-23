@@ -1,55 +1,63 @@
 import base64
 import requests
-from config import GOOGLE_VISION_API_KEY
+from config import GOOGLE_VISION_API_KEY, QUEUE_THRESHOLD, PASSERBY_EDGE
 
 VISION_URL = f"https://vision.googleapis.com/v1/images:annotate?key={GOOGLE_VISION_API_KEY}"
 
 
-def detect_people(frame_bytes: bytes) -> dict:
-    """
-    Sends a JPEG frame to Google Cloud Vision API.
-    Returns people_count and zone breakdown (left/center/right thirds of frame).
-    """
-    b64 = base64.b64encode(frame_bytes).decode("utf-8")
-
-    payload = {
-        "requests": [
-            {
-                "image": {"content": b64},
-                "features": [{"type": "OBJECT_LOCALIZATION", "maxResults": 50}],
-            }
-        ]
-    }
-
-    resp = requests.post(VISION_URL, json=payload, timeout=10)
+def detect_people(frame_bytes: bytes, weather: dict | None = None) -> dict:
+    b64 = base64.b64encode(frame_bytes).decode()
+    payload = {"requests": [{"image": {"content": b64},
+                              "features": [{"type": "OBJECT_LOCALIZATION", "maxResults": 60}]}]}
+    resp = requests.post(VISION_URL, json=payload, timeout=12)
     resp.raise_for_status()
-    data = resp.json()
 
-    annotations = (
-        data.get("responses", [{}])[0].get("localizedObjectAnnotations", [])
-    )
-
+    annotations = resp.json().get("responses", [{}])[0].get("localizedObjectAnnotations", [])
     people = [a for a in annotations if a.get("name", "").lower() == "person"]
 
-    zone_left = zone_center = zone_right = 0
-
-    for person in people:
-        verts = person.get("boundingPoly", {}).get("normalizedVertices", [])
+    in_store, passersby = [], []
+    for p in people:
+        verts = p.get("boundingPoly", {}).get("normalizedVertices", [])
         if not verts:
             continue
-        xs = [v.get("x", 0) for v in verts]
+        xs = [v.get("x", 0.5) for v in verts]
         center_x = sum(xs) / len(xs)
+        min_x, max_x = min(xs), max(xs)
 
-        if center_x < 0.33:
+        # Passerby: bounding box clips the edge of the frame
+        if min_x < PASSERBY_EDGE or max_x > (1 - PASSERBY_EDGE):
+            passersby.append(center_x)
+        else:
+            in_store.append(center_x)
+
+    zone_left = zone_center = zone_right = 0
+    for cx in in_store:
+        if cx < 0.33:
             zone_left += 1
-        elif center_x <= 0.67:
+        elif cx <= 0.67:
             zone_center += 1
         else:
             zone_right += 1
 
-    return {
-        "people_count": len(people),
-        "zone_left": zone_left,
-        "zone_center": zone_center,
-        "zone_right": zone_right,
+    zones = {"left": zone_left, "center": zone_center, "right": zone_right}
+    busiest_zone = max(zones, key=zones.get) if any(zones.values()) else "none"
+
+    # Queue: people in a single zone above threshold counts as a queue
+    queue_length = max(
+        max(zone_left  - (QUEUE_THRESHOLD - 1), 0),
+        max(zone_right - (QUEUE_THRESHOLD - 1), 0),
+    )
+
+    result = {
+        "people_count":   len(in_store),
+        "passerby_count": len(passersby),
+        "zone_left":      zone_left,
+        "zone_center":    zone_center,
+        "zone_right":     zone_right,
+        "queue_length":   queue_length,
+        "busiest_zone":   busiest_zone,
     }
+    if weather:
+        result["weather_temp"] = weather.get("temperature")
+        result["weather_code"] = weather.get("code")
+    return result
