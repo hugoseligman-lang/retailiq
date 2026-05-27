@@ -1,5 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { api } from "./api";
+import Onboarding          from "./components/Onboarding";
+import CalibrationWizard   from "./components/CalibrationWizard";
 import LiveWidget      from "./components/LiveWidget";
 import TodayStats      from "./components/TodayStats";
 import HeatmapGrid     from "./components/HeatmapGrid";
@@ -11,13 +13,25 @@ import ChatInterface   from "./components/ChatInterface";
 const REFRESH_MS = 30_000;
 
 export default function App() {
+  // 'loading' | 'connect' | 'setup' | 'dashboard'
+  const [appState, setAppState] = useState("loading");
+
+  useEffect(() => {
+    const hasBackend = !!localStorage.getItem("iq_backend");
+    const isDev = import.meta.env.DEV;
+    api.setupStatus()
+      .then(r => setAppState(r.setup_complete ? "dashboard" : "setup"))
+      .catch(() => setAppState(isDev || hasBackend ? "dashboard" : "connect"));
+  }, []);
+
   const [live,     setLive]     = useState(null);
   const [today,    setToday]    = useState(null);
   const [insights, setInsights] = useState(null);
   const [summary,  setSummary]  = useState(null);
   const [weather,  setWeather]  = useState(null);
-  const [online,   setOnline]   = useState(false);
-  const [store,    setStore]    = useState("RetailIQ");
+  const [online,      setOnline]      = useState(false);
+  const [store,       setStore]       = useState("RetailIQ");
+  const [showCalib,   setShowCalib]   = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -46,6 +60,23 @@ export default function App() {
   });
   const timeStr = now.toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit" });
 
+  if (appState === "loading") return (
+    <div className="ob-shell">
+      <div className="ob-card" style={{ alignItems: "center" }}>
+        <div className="ob-logo"><span>Retail</span>IQ</div>
+        <p style={{ color: "var(--muted)", fontSize: "0.78rem" }}>Connecting…</p>
+      </div>
+    </div>
+  );
+
+  if (appState === "connect") return (
+    <Onboarding startAtConnect={true} onComplete={() => setAppState("dashboard")} />
+  );
+
+  if (appState === "setup") return (
+    <Onboarding startAtConnect={false} onComplete={() => setAppState("dashboard")} />
+  );
+
   return (
     <div className="shell">
       {/* ── Topbar ── */}
@@ -61,8 +92,13 @@ export default function App() {
             <span className={`live-dot ${online ? "" : "offline-dot"}`} />
             {online ? "Live" : "Offline"}
           </span>
+          <button className="calib-trigger-btn" onClick={() => setShowCalib(true)} title="Setup & Calibration">
+            ⚙ Calibrate
+          </button>
         </div>
       </header>
+
+      {showCalib && <CalibrationWizard onClose={() => setShowCalib(false)} />}
 
       <main className="content">
         {/* ── Section 1: Raw Data ── */}

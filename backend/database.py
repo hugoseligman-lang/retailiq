@@ -92,6 +92,68 @@ def init_db():
             generated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             summary      TEXT NOT NULL
         );
+
+        -- Store config (set via onboarding wizard)
+        CREATE TABLE IF NOT EXISTS store_config (
+            key        TEXT PRIMARY KEY,
+            value      TEXT NOT NULL,
+            updated_at TEXT DEFAULT (datetime('now'))
+        );
+
+        -- Registered cameras
+        CREATE TABLE IF NOT EXISTS cameras (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            name       TEXT NOT NULL DEFAULT 'Camera',
+            mode       TEXT NOT NULL,
+            source     TEXT NOT NULL,
+            width      INTEGER DEFAULT 1920,
+            height     INTEGER DEFAULT 1080,
+            active     INTEGER DEFAULT 1,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        -- Calibration zones (percentage coords, 0–100)
+        CREATE TABLE IF NOT EXISTS calibration_zones (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            camera_id  INTEGER NOT NULL,
+            zone_type  TEXT NOT NULL,
+            label      TEXT NOT NULL,
+            x1_pct     REAL NOT NULL,
+            y1_pct     REAL NOT NULL,
+            x2_pct     REAL NOT NULL,
+            y2_pct     REAL NOT NULL,
+            confidence REAL DEFAULT 1.0,
+            FOREIGN KEY (camera_id) REFERENCES cameras(id)
+        );
+
+        -- Entrance counting lines (percentage coords)
+        CREATE TABLE IF NOT EXISTS entrance_lines (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            camera_id       INTEGER NOT NULL UNIQUE,
+            x1_pct          REAL NOT NULL,
+            y1_pct          REAL NOT NULL,
+            x2_pct          REAL NOT NULL,
+            y2_pct          REAL NOT NULL,
+            entry_direction TEXT NOT NULL DEFAULT 'left_to_right',
+            FOREIGN KEY (camera_id) REFERENCES cameras(id)
+        );
+
+        -- Multi-camera spatial relationships
+        CREATE TABLE IF NOT EXISTS camera_relationships (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            camera1_id   INTEGER NOT NULL,
+            camera2_id   INTEGER NOT NULL,
+            overlap_data TEXT,
+            created_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        -- Queue detection config per camera
+        CREATE TABLE IF NOT EXISTS queue_config (
+            camera_id         INTEGER PRIMARY KEY,
+            min_people        INTEGER DEFAULT 2,
+            min_dwell_seconds INTEGER DEFAULT 30,
+            FOREIGN KEY (camera_id) REFERENCES cameras(id)
+        );
         """)
         conn.commit()
 
@@ -353,9 +415,166 @@ def get_daily_summary():
     return dict(row) if row else {}
 
 
+# ── Store config ────────────────────────────────────────────────────────────
+
+def get_config(key: str, default=None):
+    with get_conn() as conn:
+        row = conn.execute("SELECT value FROM store_config WHERE key=?", (key,)).fetchone()
+    return row["value"] if row else default
+
+
+def set_config(key: str, value: str):
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO store_config (key, value) VALUES (?,?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=datetime('now')",
+            (key, str(value))
+        )
+        conn.commit()
+
+
+def get_all_config() -> dict:
+    with get_conn() as conn:
+        rows = conn.execute("SELECT key, value FROM store_config").fetchall()
+    return {r["key"]: r["value"] for r in rows}
+
+
+def is_setup_complete() -> bool:
+    return bool(get_config("store_name"))
+
+
 # ── Historical summaries for AI context ─────────────────────────────────────
 
-def get_history_summary(days: int = 7):
+# ── Cameras ──────────────────────────────────────────────────────────────────
+
+def add_camera(name: str, mode: str, source: str, width: int = 1920, height: int = 1080) -> int:
+    with get_conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO cameras (name, mode, source, width, height) VALUES (?,?,?,?,?)",
+            (name, mode, source, width, height)
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
+def get_cameras() -> list:
+    with get_conn() as conn:
+        rows = conn.execute("SELECT * FROM cameras WHERE active=1 ORDER BY id").fetchall()
+    return [dict(r) for r in rows]
+
+
+def delete_camera(camera_id: int):
+    with get_conn() as conn:
+        conn.execute("UPDATE cameras SET active=0 WHERE id=?", (camera_id,))
+        conn.commit()
+
+
+# ── Calibration zones ─────────────────────────────────────────────────────────
+
+def save_zones(camera_id: int, zones: list):
+    """Replace all zones for a camera."""
+    with get_conn() as conn:
+        conn.execute("DELETE FROM calibration_zones WHERE camera_id=?", (camera_id,))
+        for z in zones:
+            conn.execute(
+                "INSERT INTO calibration_zones (camera_id, zone_type, label, x1_pct, y1_pct, x2_pct, y2_pct, confidence) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (camera_id, z.get("zone_type","custom"), z.get("label","Zone"),
+                 z["x1_pct"], z["y1_pct"], z["x2_pct"], z["y2_pct"],
+                 z.get("confidence", 1.0))
+            )
+        conn.commit()
+
+
+def get_zones(camera_id: int) -> list:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM calibration_zones WHERE camera_id=? ORDER BY id", (camera_id,)
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+# ── Entrance lines ────────────────────────────────────────────────────────────
+
+def save_entrance_line(camera_id: int, line: dict):
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO entrance_lines (camera_id, x1_pct, y1_pct, x2_pct, y2_pct, entry_direction) "
+            "VALUES (?,?,?,?,?,?) "
+            "ON CONFLICT(camera_id) DO UPDATE SET "
+            "x1_pct=excluded.x1_pct, y1_pct=excluded.y1_pct, "
+            "x2_pct=excluded.x2_pct, y2_pct=excluded.y2_pct, "
+            "entry_direction=excluded.entry_direction",
+            (camera_id, line["x1_pct"], line["y1_pct"],
+             line["x2_pct"], line["y2_pct"],
+             line.get("entry_direction", "left_to_right"))
+        )
+        conn.commit()
+
+
+def get_entrance_line(camera_id: int) -> dict:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM entrance_lines WHERE camera_id=?", (camera_id,)
+        ).fetchone()
+    return dict(row) if row else {}
+
+
+# ── Camera relationships ──────────────────────────────────────────────────────
+
+def save_camera_relationship(cam1_id: int, cam2_id: int, overlap_data: str):
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO camera_relationships (camera1_id, camera2_id, overlap_data) VALUES (?,?,?)",
+            (cam1_id, cam2_id, overlap_data)
+        )
+        conn.commit()
+
+
+def get_camera_relationships() -> list:
+    with get_conn() as conn:
+        rows = conn.execute("SELECT * FROM camera_relationships ORDER BY created_at DESC").fetchall()
+    return [dict(r) for r in rows]
+
+
+# ── Queue config ──────────────────────────────────────────────────────────────
+
+def save_queue_config(camera_id: int, min_people: int, min_dwell: int):
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO queue_config (camera_id, min_people, min_dwell_seconds) VALUES (?,?,?) "
+            "ON CONFLICT(camera_id) DO UPDATE SET min_people=excluded.min_people, min_dwell_seconds=excluded.min_dwell_seconds",
+            (camera_id, min_people, min_dwell)
+        )
+        conn.commit()
+
+
+def get_queue_config(camera_id: int) -> dict:
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM queue_config WHERE camera_id=?", (camera_id,)).fetchone()
+    return dict(row) if row else {"camera_id": camera_id, "min_people": 2, "min_dwell_seconds": 30}
+
+
+# ── Calibration summary ───────────────────────────────────────────────────────
+
+def get_calibration_summary() -> dict:
+    cams   = get_cameras()
+    zones  = []
+    lines  = []
+    for c in cams:
+        zones  += get_zones(c["id"])
+        line = get_entrance_line(c["id"])
+        if line:
+            lines.append(line)
+    return {
+        "cameras":           cams,
+        "zone_count":        len(zones),
+        "entrance_lines":    lines,
+        "calibration_complete": bool(get_config("calibration_complete")),
+    }
+
+
+# ── Historical summaries for AI context ─────────────────────────────────────
     """Return per-day aggregates for AI context."""
     cutoff = (date.today() - timedelta(days=days)).isoformat()
     with get_conn() as conn:
