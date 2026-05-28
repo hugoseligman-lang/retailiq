@@ -46,6 +46,11 @@ export const api = {
   submitSetup:     (data)    => post("/setup", data),
   geocode:         (q)       => get(`/setup/geocode?q=${encodeURIComponent(q)}`),
 
+  // Arlo camera auth
+  arloConnect:     (email, password)       => post("/arlo/connect", { email, password }),
+  arloVerify:      (session_id, code)      => post("/arlo/verify", { session_id, code }),
+  arloSnapshot:    (session_id, device_id) => get(`/arlo/snapshot/${session_id}/${device_id}`),
+
   // Calibration
   calibData:           ()              => get("/calibration/data"),
   calibScanStart:      ()              => post("/calibration/scan/start", {}),

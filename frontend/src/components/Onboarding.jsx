@@ -67,6 +67,14 @@ export default function Onboarding({ startAtConnect, onComplete }) {
   const [done,            setDone]            = useState(false);
   const debounce = useRef(null);
 
+  // Arlo-specific sub-flow
+  // idle → connecting → needs_2fa → connected | error
+  const [arloState,     setArloState]     = useState("idle");
+  const [arloSessionId, setArloSessionId] = useState("");
+  const [arloTfaCode,   setArloTfaCode]   = useState("");
+  const [arloCameras,   setArloCameras]   = useState([]);
+  const [arloError,     setArloError]     = useState("");
+
   function set(key, val) {
     setFormState(f => ({ ...f, [key]: val }));
   }
@@ -140,6 +148,39 @@ export default function Onboarding({ startAtConnect, onComplete }) {
     setLocationResults([]);
   }
 
+  // ── Arlo connect ───────────────────────────────────────────────────────────
+
+  async function connectArlo() {
+    setArloState("connecting");
+    setArloError("");
+    try {
+      const r = await api.arloConnect(form.arlo_email, form.arlo_password);
+      setArloSessionId(r.session_id);
+      if (r.needs_2fa) {
+        setArloState("needs_2fa");
+      } else {
+        setArloCameras(r.cameras || []);
+        if (r.cameras?.length) set("arlo_device", r.cameras[0].id);
+        setArloState("connected");
+      }
+    } catch (e) {
+      setArloError(e.message || "Connection failed. Check your email and password.");
+      setArloState("error");
+    }
+  }
+
+  async function verifyArlo2fa() {
+    setArloError("");
+    try {
+      const r = await api.arloVerify(arloSessionId, arloTfaCode);
+      setArloCameras(r.cameras || []);
+      if (r.cameras?.length) set("arlo_device", r.cameras[0].id);
+      setArloState("connected");
+    } catch (e) {
+      setArloError(e.message || "Incorrect code — please try again.");
+    }
+  }
+
   // ── Submit ─────────────────────────────────────────────────────────────────
 
   async function submit() {
@@ -153,7 +194,10 @@ export default function Onboarding({ startAtConnect, onComplete }) {
         lat:              form.lat,
         lon:              form.lon,
         camera_mode:      form.camera_mode,
-        camera_source:    form.camera_mode === "arlo" ? form.arlo_device : form.camera_source,
+        // For Arlo: source is "sessionId:deviceId" so the backend can capture frames
+        camera_source:    form.camera_mode === "arlo"
+                            ? `${arloSessionId}:${form.arlo_device}`
+                            : form.camera_source,
         arlo_email:       form.arlo_email,
         arlo_password:    form.arlo_password,
         arlo_device:      form.arlo_device,
@@ -175,8 +219,8 @@ export default function Onboarding({ startAtConnect, onComplete }) {
     if (step === "store")    return form.store_name.trim().length > 0;
     if (step === "location") return !!form.lat && !!form.lon;
     if (step === "camera") {
-      if (form.camera_mode === "arlo")    return !!(form.arlo_email && form.arlo_password && form.arlo_device);
-      if (form.camera_mode !== "webcam")  return form.camera_source.trim().length > 0;
+      if (form.camera_mode === "arlo")   return arloState === "connected" && !!form.arlo_device;
+      if (form.camera_mode !== "webcam") return form.camera_source.trim().length > 0;
     }
     return true;
   }
@@ -408,23 +452,95 @@ export default function Onboarding({ startAtConnect, onComplete }) {
                 <span className="ob-hint">Found in your camera's settings app or supplied by your installer.</span>
               </div>
             )}
-            {form.camera_mode === "arlo" && (<>
-              <div className="ob-field">
-                <label>Arlo Account Email</label>
-                <input className="ob-input" type="email" placeholder="you@example.com"
-                  value={form.arlo_email} onChange={e => set("arlo_email", e.target.value)} />
+            {form.camera_mode === "arlo" && (
+              <div className="ob-arlo-flow">
+                {/* Step 1 — credentials */}
+                {(arloState === "idle" || arloState === "error") && (<>
+                  <div className="ob-field">
+                    <label>Arlo Account Email</label>
+                    <input className="ob-input" type="email" placeholder="you@example.com"
+                      value={form.arlo_email}
+                      onChange={e => { set("arlo_email", e.target.value); setArloState("idle"); }} />
+                  </div>
+                  <div className="ob-field">
+                    <label>Arlo Account Password</label>
+                    <input className="ob-input" type="password"
+                      value={form.arlo_password}
+                      onChange={e => { set("arlo_password", e.target.value); setArloState("idle"); }} />
+                  </div>
+                  {arloError && <div className="ob-error">{arloError}</div>}
+                  <button
+                    className="ob-btn ob-primary"
+                    disabled={!form.arlo_email || !form.arlo_password}
+                    onClick={connectArlo}
+                  >Connect to Arlo →</button>
+                </>)}
+
+                {/* Connecting spinner */}
+                {arloState === "connecting" && (
+                  <div className="ob-arlo-status">
+                    <div className="ob-arlo-spinner" />
+                    <span>Connecting to Arlo…</span>
+                  </div>
+                )}
+
+                {/* Step 2 — 2FA code */}
+                {arloState === "needs_2fa" && (<>
+                  <div className="ob-arlo-2fa-card">
+                    <div className="ob-arlo-2fa-icon">📧</div>
+                    <div className="ob-arlo-2fa-title">Check your email</div>
+                    <div className="ob-arlo-2fa-sub">
+                      Arlo sent a verification code to <strong>{form.arlo_email}</strong>
+                    </div>
+                  </div>
+                  <div className="ob-field">
+                    <label>Verification Code</label>
+                    <input
+                      className="ob-input ob-input-code"
+                      type="text"
+                      inputMode="numeric"
+                      placeholder="123456"
+                      maxLength={8}
+                      autoFocus
+                      value={arloTfaCode}
+                      onChange={e => setArloTfaCode(e.target.value.replace(/\D/g, ""))}
+                      onKeyDown={e => e.key === "Enter" && arloTfaCode.length >= 4 && verifyArlo2fa()}
+                    />
+                  </div>
+                  {arloError && <div className="ob-error">{arloError}</div>}
+                  <button
+                    className="ob-btn ob-primary"
+                    disabled={arloTfaCode.length < 4}
+                    onClick={verifyArlo2fa}
+                  >Verify →</button>
+                </>)}
+
+                {/* Step 3 — camera picker */}
+                {arloState === "connected" && (<>
+                  <div className="ob-arlo-ok">
+                    <span className="ob-arlo-ok-tick">✓</span>
+                    Connected to Arlo — {arloCameras.length} camera{arloCameras.length !== 1 ? "s" : ""} found
+                  </div>
+                  {arloCameras.length > 0 && (
+                    <div className="ob-field">
+                      <label>Select Camera</label>
+                      <select
+                        className="ob-input"
+                        value={form.arlo_device}
+                        onChange={e => set("arlo_device", e.target.value)}
+                      >
+                        {arloCameras.map(c => (
+                          <option key={c.id} value={c.id}>{c.name} ({c.model})</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                  {arloCameras.length === 0 && (
+                    <div className="ob-error">No cameras found on this account.</div>
+                  )}
+                </>)}
               </div>
-              <div className="ob-field">
-                <label>Arlo Account Password</label>
-                <input className="ob-input" type="password"
-                  value={form.arlo_password} onChange={e => set("arlo_password", e.target.value)} />
-              </div>
-              <div className="ob-field">
-                <label>Camera Name</label>
-                <input className="ob-input" placeholder="e.g. Front Entrance"
-                  value={form.arlo_device} onChange={e => set("arlo_device", e.target.value)} />
-              </div>
-            </>)}
+            )}
           </div>
         )}
 

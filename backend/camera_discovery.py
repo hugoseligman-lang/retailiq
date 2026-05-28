@@ -174,5 +174,24 @@ def test_camera(mode: str, source: str) -> dict:
 
 
 def capture_frame(mode: str, source: str) -> str | None:
+    """
+    Capture a single frame from any camera mode.
+    For 'arlo', source is 'session_id:device_id'.
+    """
+    if mode == "arlo":
+        try:
+            import arlo_camera as ac
+            if ":" in str(source):
+                session_id, device_id = source.split(":", 1)
+            else:
+                # Fallback: use active session
+                sess = ac.get_active_session()
+                if not sess:
+                    return None
+                session_id = sess.session_id
+                device_id  = source
+            return ac.get_snapshot(session_id, device_id) or None
+        except Exception:
+            return None
     r = test_camera(mode, source)
     return r.get("frame") if r.get("ok") else None

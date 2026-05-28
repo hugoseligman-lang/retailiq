@@ -12,6 +12,7 @@ import ai_insights as ai
 import chat_handler
 import camera_discovery as cam_disc
 import scene_analysis as scene_ai
+import arlo_camera as arlo_cam
 from config import STORE_NAME
 
 app = Flask(__name__)
@@ -418,6 +419,50 @@ def setup_geocode():
         return jsonify(r.json())
     except Exception:
         return jsonify({"results": []})
+
+
+# ── Arlo camera auth ──────────────────────────────────────────────────────
+
+@app.route("/api/arlo/connect", methods=["POST"])
+def arlo_connect():
+    """
+    Start Arlo login. Returns {session_id, needs_2fa, cameras?}.
+    If needs_2fa is true, call /api/arlo/verify next.
+    """
+    data  = request.get_json(force=True) or {}
+    email = (data.get("email") or "").strip()
+    pw    = (data.get("password") or "").strip()
+    if not email or not pw:
+        return jsonify({"error": "Email and password required"}), 400
+    try:
+        result = arlo_cam.login(email, pw)
+        return jsonify(result)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.route("/api/arlo/verify", methods=["POST"])
+def arlo_verify():
+    """Submit 2FA code. Returns {cameras: [...]}."""
+    data       = request.get_json(force=True) or {}
+    session_id = data.get("session_id", "")
+    code       = data.get("code", "")
+    if not session_id or not code:
+        return jsonify({"error": "session_id and code required"}), 400
+    try:
+        result = arlo_cam.submit_2fa(session_id, code)
+        return jsonify(result)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.route("/api/arlo/snapshot/<session_id>/<device_id>")
+def arlo_snapshot(session_id, device_id):
+    """Return a live snapshot from an Arlo camera as base64 JPEG."""
+    frame = arlo_cam.get_snapshot(session_id, device_id)
+    if not frame:
+        return jsonify({"error": "No snapshot available"}), 503
+    return jsonify({"frame": frame})
 
 
 # ── Meta ─────────────────────────────────────────────────────────────────
