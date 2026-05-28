@@ -1,31 +1,33 @@
 """
-arlo_camera.py — Arlo cloud camera integration.
+arlo_camera.py — Direct Arlo REST implementation (no pyaarlo).
+
+Uses cloudscraper (installed via pyaarlo) to bypass Arlo's bot protection,
+then calls Arlo's API directly — avoiding pyaarlo's broken 2FA handling.
 
 Flow:
-  1. login(email, password) → {session_id, needs_2fa}
-  2. if needs_2fa: submit_2fa(session_id, code) → {cameras}
-  3. capture_snapshot(session_id, device_id) → base64 JPEG
-
-Sessions persist for the server lifetime; pyaarlo saves auth tokens to disk
-so re-starts after the first login don't need 2FA again.
+  1. login(email, password)   → {session_id, needs_2fa, cameras?}
+  2. submit_2fa(session_id, code) → {cameras}
+  3. get_snapshot(session_id, device_id) → base64 JPEG
 """
 
+import base64
+import json
 import threading
 import time
-import base64
 import uuid
-import queue
-import builtins
 import os
-import io
 import logging
 from pathlib import Path
 
 try:
-    import pyaarlo
-    PYAARLO_OK = True
+    import cloudscraper
+    SCRAPER_OK = True
 except ImportError:
-    PYAARLO_OK = False
+    try:
+        import requests as cloudscraper          # bare fallback
+        SCRAPER_OK = True
+    except ImportError:
+        SCRAPER_OK = False
 
 try:
     import requests as _req
@@ -35,123 +37,244 @@ except ImportError:
 
 log = logging.getLogger(__name__)
 
-# ── Session store ─────────────────────────────────────────────────────────────
+AUTH_BASE = "https://ocapi-app.arlo.com"
+API_BASE  = "https://myapi.arlo.com"
 
-_sessions: dict[str, "ArloSession"] = {}
-_session_lock = threading.Lock()
+STATE_DIR = Path(os.path.dirname(__file__)) / ".arlo_state"
+STATE_DIR.mkdir(exist_ok=True)
 
-# Storage dir for pyaarlo auth tokens (persisted across server restarts)
-STORAGE_DIR = Path(os.path.dirname(__file__)) / ".arlo_state"
-STORAGE_DIR.mkdir(exist_ok=True)
+_sessions: dict = {}
+_lock = threading.Lock()
 
-# Global lock so only one Arlo login runs at a time (avoids input() conflicts)
-_login_lock = threading.Lock()
+# Camera device types Arlo uses
+_CAMERA_TYPES = {
+    "arloq", "arloss", "arloqs", "arlobaby",
+    "arlopro", "arlopro2", "arlopro3", "arlopro4", "arlopro5",
+    "arloessential", "arloessential2", "arloultra", "arloultra2",
+    "arlo", "arlovms3030", "arlovmc2030",
+}
 
 
 class ArloSession:
     def __init__(self, session_id: str, email: str, password: str):
-        self.session_id  = session_id
-        self.email       = email
-        self.password    = password
-        self.ar          = None
-        self.cameras: list = []
-        self.status      = "connecting"   # connecting | needs_2fa | connected | error
-        self.error: str  = ""
-        self._tfa_q      = queue.Queue()
-        self._ready      = threading.Event()
+        self.session_id      = session_id
+        self.email           = email
+        self.password        = password
+        self.token: str      = ""
+        self.user_id: str    = ""
+        self.factor_id: str  = ""
+        self.factor_auth_code: str = ""
+        self.cameras: list   = []
+        self.status          = "idle"   # idle|needs_2fa|connected|error
+        self.error           = ""
 
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
+        # One scraper per session (keeps cookies)
+        if SCRAPER_OK and hasattr(cloudscraper, "create_scraper"):
+            self.sc = cloudscraper.create_scraper()
+        else:
+            import requests
+            self.sc = requests.Session()
 
-    # ── Login thread ──────────────────────────────────────────────────────────
+        self._state_file = STATE_DIR / (email.replace("@", "_").replace(".", "_") + ".json")
 
-    def _run(self):
-        if not PYAARLO_OK:
-            self.status = "error"
-            self.error  = "pyaarlo not installed — run: pip install pyaarlo"
-            self._ready.set()
-            return
+    # ── Helpers ───────────────────────────────────────────────────────────────
 
-        # Serialise logins to avoid input() conflicts across sessions
-        with _login_lock:
-            orig_input = builtins.input
+    def _headers(self, extra: dict | None = None) -> dict:
+        h = {
+            "User-Agent":   "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+            "Content-Type": "application/json",
+            "Origin":       "https://my.arlo.com",
+            "Referer":      "https://my.arlo.com/",
+            "auth-version": "2",
+        }
+        if self.token:
+            h["Authorization"] = self.token
+        if extra:
+            h.update(extra)
+        return h
 
-            def _fake_input(prompt=""):
-                """Called by pyaarlo when 2FA code is needed."""
-                self.status = "needs_2fa"
-                self._ready.set()          # unblock the caller
-                try:
-                    code = self._tfa_q.get(timeout=300)  # 5-min window
-                    return code
-                except queue.Empty:
-                    raise RuntimeError("Timed out waiting for 2FA code")
+    def _post(self, url: str, body: dict, timeout: int = 15) -> dict:
+        r = self.sc.post(url, json=body, headers=self._headers(), timeout=timeout)
+        try:
+            return r.json()
+        except Exception:
+            return {"meta": {"code": r.status_code, "message": r.text[:200]}}
 
-            builtins.input = _fake_input
-            try:
-                storage = str(STORAGE_DIR / self.email.replace("@", "_"))
-                self.ar = pyaarlo.PyArlo(
-                    username=self.email,
-                    password=self.password,
-                    tfa_type="EMAIL",
-                    tfa_source="cli",
-                    wait_for_initial_update=True,
-                    storage_dir=storage,
-                    save_state=True,       # ← persists tokens; no 2FA on restart
-                )
-                if self.ar.is_connected:
-                    self.cameras = self._list_cameras()
-                    self.status  = "connected"
-                else:
-                    self.status = "error"
-                    self.error  = "Could not connect to Arlo — check credentials"
-            except Exception as exc:
+    def _get(self, url: str, params: dict | None = None,
+             extra_headers: dict | None = None, timeout: int = 15) -> dict:
+        r = self.sc.get(url, params=params,
+                        headers=self._headers(extra_headers), timeout=timeout)
+        try:
+            return r.json()
+        except Exception:
+            return {}
+
+    # ── Auth ─────────────────────────────────────────────────────────────────
+
+    def try_restore(self) -> bool:
+        """Return True if we restored a valid saved session."""
+        if not self._state_file.exists():
+            return False
+        try:
+            data = json.loads(self._state_file.read_text())
+            self.token   = data.get("token", "")
+            self.user_id = data.get("user_id", "")
+            if not self.token:
+                return False
+            # Quick probe
+            body = self._get(f"{API_BASE}/hmsweb/users/devices")
+            if body.get("success"):
+                self.cameras = self._parse_cameras(body.get("data", []))
+                self.status  = "connected"
+                log.info("Arlo: restored session for %s", self.email)
+                return True
+        except Exception as exc:
+            log.warning("Arlo restore failed: %s", exc)
+        self.token = ""
+        return False
+
+    def start_login(self):
+        """Step 1 — send email + password."""
+        try:
+            body = self._post(
+                f"{AUTH_BASE}/api/auth",
+                {"email": self.email, "password": self.password},
+            )
+            meta = body.get("meta", {})
+            code = meta.get("code", 0)
+
+            if code == 401:
                 self.status = "error"
-                self.error  = str(exc)
-            finally:
-                builtins.input = orig_input
-                self._ready.set()
+                self.error  = "Incorrect password — please try again."
+                return
 
-    def _list_cameras(self) -> list:
-        if not self.ar:
-            return []
-        return [
-            {
-                "id":    d.device_id,
-                "name":  d.name,
-                "model": getattr(d, "model_id", "Arlo"),
-            }
-            for d in self.ar.cameras
-        ]
+            if code not in (200, 0, None) and code != 400:
+                self.status = "error"
+                self.error  = meta.get("message", f"Login error {code}")
+                return
 
-    # ── 2FA submission ────────────────────────────────────────────────────────
+            data = body.get("data", {})
+            self.token   = data.get("token", "")
+            self.user_id = data.get("userId", "")
 
-    def submit_2fa(self, code: str):
-        """Inject the OTP code and wait for login to complete."""
-        self._tfa_q.put(code.strip())
-        # Reset ready event so we wait for login to finish
-        self._ready.clear()
-        self._ready.wait(timeout=30)
+            # Check for 2FA factors
+            factors = data.get("factors") or []
+            if factors:
+                # Prefer EMAIL factor
+                factor = next(
+                    (f for f in factors if str(f.get("factorType", "")).upper() == "EMAIL"),
+                    factors[0]
+                )
+                self.factor_id = factor.get("factorId", "")
+                self._send_2fa_code()
+                self.status = "needs_2fa"
+            else:
+                # No 2FA — go straight to device listing
+                self._finalise()
 
-    # ── Snapshot capture ──────────────────────────────────────────────────────
+        except Exception as exc:
+            self.status = "error"
+            self.error  = str(exc)
+
+    def _send_2fa_code(self):
+        """Ask Arlo to fire the 2FA email/SMS."""
+        try:
+            body = self._post(
+                f"{AUTH_BASE}/api/startAuth",
+                {"factorId": self.factor_id},
+            )
+            data = body.get("data") or {}
+            self.factor_auth_code = data.get("factorAuthCode", "")
+        except Exception as exc:
+            log.warning("Arlo: could not send 2FA code: %s", exc)
+
+    def verify_2fa(self, code: str):
+        """Step 2 — submit the OTP the user received by email."""
+        try:
+            body = self._post(
+                f"{AUTH_BASE}/api/finishAuth",
+                {
+                    "factorAuthCode": self.factor_auth_code,
+                    "otp":            code.strip(),
+                },
+            )
+            meta = body.get("meta", {})
+            if meta.get("code") not in (200, 0, None):
+                self.status = "error"
+                self.error  = meta.get("message", "Invalid code — please try again.")
+                return
+
+            data = body.get("data") or {}
+            if data.get("token"):
+                self.token = data["token"]
+
+            self._finalise()
+
+        except Exception as exc:
+            self.status = "error"
+            self.error  = str(exc)
+
+    def _finalise(self):
+        """Fetch devices and persist the token."""
+        try:
+            body = self._get(f"{API_BASE}/hmsweb/users/devices")
+            if body.get("success"):
+                self.cameras = self._parse_cameras(body.get("data", []))
+
+            # Save so next start skips 2FA
+            self._state_file.write_text(json.dumps({
+                "token":   self.token,
+                "user_id": self.user_id,
+            }))
+            self.status = "connected"
+            log.info("Arlo: connected as %s, %d cameras", self.email, len(self.cameras))
+
+        except Exception as exc:
+            self.status = "error"
+            self.error  = str(exc)
+
+    # ── Cameras ───────────────────────────────────────────────────────────────
+
+    def _parse_cameras(self, devices: list) -> list:
+        out = []
+        for d in devices:
+            dt = d.get("deviceType", "").lower().replace(" ", "").replace("-", "")
+            # Include if type is a known camera type or contains "camera"
+            if dt in _CAMERA_TYPES or "camera" in dt or "arlo" in dt:
+                if d.get("deviceId"):
+                    out.append({
+                        "id":    d["deviceId"],
+                        "name":  d.get("deviceName", "Arlo Camera"),
+                        "model": d.get("deviceType", "Arlo"),
+                    })
+        return out
+
+    # ── Snapshot ──────────────────────────────────────────────────────────────
 
     def get_snapshot_b64(self, device_id: str) -> str:
-        """Request a fresh snapshot from Arlo and return as base64 JPEG."""
-        if not self.ar or self.status != "connected":
-            return ""
-        cam = next((d for d in self.ar.cameras if d.device_id == device_id), None)
-        if not cam:
+        """Fetch the most recent image for a camera as base64 JPEG."""
+        if not self.token or not REQUESTS_OK:
             return ""
         try:
-            # Request a new snapshot capture
-            cam.request_snapshot()
-            time.sleep(3)   # give Arlo time to upload
+            # Pull recent library items
+            from datetime import datetime, timedelta
+            today = datetime.utcnow().strftime("%Y%m%d")
+            week_ago = (datetime.utcnow() - timedelta(days=7)).strftime("%Y%m%d")
 
-            img_url = cam.last_image
-            if not img_url or not REQUESTS_OK:
-                return ""
-            resp = _req.get(img_url, timeout=10)
-            if resp.ok:
-                return base64.b64encode(resp.content).decode()
+            body = self._get(
+                f"{API_BASE}/hmsweb/users/library",
+                params={"dateFrom": week_ago, "dateTo": today},
+            )
+            items = body.get("data") or []
+
+            for item in items:
+                if item.get("deviceId") == device_id:
+                    url = (item.get("presignedThumbnailUrl")
+                           or item.get("presignedContentUrl"))
+                    if url:
+                        resp = _req.get(url, timeout=12)
+                        if resp.ok:
+                            return base64.b64encode(resp.content).decode()
         except Exception as exc:
             log.warning("Arlo snapshot error: %s", exc)
         return ""
@@ -161,36 +284,54 @@ class ArloSession:
 
 def login(email: str, password: str) -> dict:
     """
-    Start an Arlo login.
+    Start Arlo login. If a saved session exists for this email it reconnects
+    instantly (no 2FA). Otherwise does the full auth flow.
     Returns {'session_id', 'needs_2fa': bool, 'cameras': list|None}
     """
+    if not SCRAPER_OK:
+        raise RuntimeError(
+            "cloudscraper not installed. Run: pip install pyaarlo"
+        )
+
     session_id = uuid.uuid4().hex[:12]
     session = ArloSession(session_id, email, password)
-    with _session_lock:
+
+    with _lock:
         _sessions[session_id] = session
 
-    # Wait up to 8 s to see if it connects without 2FA (cached token path)
-    session._ready.wait(timeout=8)
+    # Try saved token first (instant, no 2FA)
+    if session.try_restore():
+        return {
+            "session_id": session_id,
+            "needs_2fa":  False,
+            "cameras":    session.cameras,
+        }
+
+    # Fresh login
+    session.start_login()
 
     if session.status == "connected":
-        return {"session_id": session_id, "needs_2fa": False, "cameras": session.cameras}
+        return {
+            "session_id": session_id,
+            "needs_2fa":  False,
+            "cameras":    session.cameras,
+        }
     if session.status == "needs_2fa":
-        return {"session_id": session_id, "needs_2fa": True, "cameras": None}
-    if session.status == "error":
-        raise RuntimeError(session.error or "Arlo login failed")
-    # Still connecting after timeout — assume 2FA is incoming
-    return {"session_id": session_id, "needs_2fa": True, "cameras": None}
+        return {
+            "session_id": session_id,
+            "needs_2fa":  True,
+            "cameras":    None,
+        }
+
+    raise RuntimeError(session.error or "Arlo login failed")
 
 
 def submit_2fa(session_id: str, code: str) -> dict:
-    """
-    Submit the 2FA code for a pending session.
-    Returns {'cameras': [...]}
-    """
+    """Submit the OTP. Returns {'cameras': [...]}."""
     session = _sessions.get(session_id)
     if not session:
-        raise RuntimeError("Session not found or expired — please reconnect")
-    session.submit_2fa(code)
+        raise RuntimeError("Session not found — please reconnect")
+    session.verify_2fa(code)
     if session.status == "connected":
         return {"cameras": session.cameras}
     raise RuntimeError(session.error or "2FA verification failed")
@@ -202,14 +343,12 @@ def get_cameras(session_id: str) -> list:
 
 
 def get_snapshot(session_id: str, device_id: str) -> str:
-    """Returns base64 JPEG or empty string."""
     session = _sessions.get(session_id)
     return session.get_snapshot_b64(device_id) if session else ""
 
 
-def get_active_session() -> "ArloSession | None":
-    """Returns the most recent connected session (used by the detector loop)."""
-    with _session_lock:
+def get_active_session() -> ArloSession | None:
+    with _lock:
         for s in reversed(list(_sessions.values())):
             if s.status == "connected":
                 return s
