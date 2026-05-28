@@ -3,6 +3,7 @@ import { api } from "./api";
 import Onboarding          from "./components/Onboarding";
 import CalibrationWizard   from "./components/CalibrationWizard";
 import LiveWidget      from "./components/LiveWidget";
+import LiveFeed        from "./components/LiveFeed";
 import TodayStats      from "./components/TodayStats";
 import HeatmapGrid     from "./components/HeatmapGrid";
 import TrafficChart    from "./components/TrafficChart";
@@ -111,6 +112,7 @@ export default function App() {
             <div className="section-title">Section 1 — Live &amp; Raw Data</div>
           </div>
 
+          <LiveFeed />
           <LiveWidget live={live} weather={weather} />
           <TodayStats stats={today} />
 

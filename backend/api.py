@@ -3,7 +3,7 @@ import os
 import threading
 import time
 import requests as req
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory, Response
 from flask_cors import CORS
 import detector
 import database as db
@@ -13,6 +13,7 @@ import chat_handler
 import camera_discovery as cam_disc
 import scene_analysis as scene_ai
 import arlo_camera as arlo_cam
+import tracker
 from config import STORE_NAME
 
 app = Flask(__name__)
@@ -419,6 +420,50 @@ def setup_geocode():
         return jsonify(r.json())
     except Exception:
         return jsonify({"results": []})
+
+
+# ── Live tracker (webcam + HOG + line crossing) ───────────────────────────────
+
+def _mjpeg_generator():
+    """Yield MJPEG frames for the /api/stream endpoint."""
+    while True:
+        frame = tracker.get_frame()
+        if frame:
+            yield (
+                b"--frame\r\n"
+                b"Content-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"
+            )
+        time.sleep(0.04)
+
+
+@app.route("/api/stream")
+def video_stream():
+    """MJPEG live stream from the tracker."""
+    tracker.start()   # idempotent — starts only if not already running
+    return Response(
+        _mjpeg_generator(),
+        mimetype="multipart/x-mixed-replace; boundary=frame",
+    )
+
+
+@app.route("/api/tracker/counts")
+def tracker_counts():
+    tracker.start()
+    return jsonify(tracker.get_counts())
+
+
+@app.route("/api/tracker/line", methods=["POST"])
+def tracker_set_line():
+    body = request.get_json(force=True) or {}
+    y = body.get("y", 0.55)
+    tracker.set_line(y)
+    return jsonify({"ok": True, "line_y": tracker.get_counts()["line_y"]})
+
+
+@app.route("/api/tracker/reset", methods=["POST"])
+def tracker_reset():
+    tracker.reset()
+    return jsonify({"ok": True})
 
 
 # ── Arlo camera auth ──────────────────────────────────────────────────────

@@ -24,11 +24,7 @@ async function post(path, body) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!r.ok) {
-    let msg = `Request failed (${r.status})`;
-    try { const d = await r.json(); if (d.error) msg = d.error; } catch {}
-    throw new Error(msg);
-  }
+  if (!r.ok) throw new Error(`POST ${path} → ${r.status}`);
   return r.json();
 }
 
@@ -49,6 +45,12 @@ export const api = {
   setupStatus:     ()        => get("/setup/status"),
   submitSetup:     (data)    => post("/setup", data),
   geocode:         (q)       => get(`/setup/geocode?q=${encodeURIComponent(q)}`),
+
+  // Live tracker
+  trackerCounts:   ()      => get("/tracker/counts"),
+  trackerSetLine:  (y)     => post("/tracker/line", { y }),
+  trackerReset:    ()      => post("/tracker/reset", {}),
+  streamUrl:       ()      => (base() + "/stream"),
 
   // Arlo camera auth
   arloConnect:     (email, password)       => post("/arlo/connect", { email, password }),

@@ -679,3 +679,151 @@ body { font-family: "Inter", system-ui, sans-serif; background: var(--bg); color
   .cw-analysis-results { grid-template-columns: 1fr; }
   .cw-xref-frames { grid-template-columns: 1fr; }
 }
+
+/* ── Live Feed (webcam tracker) ──────────────────────────────────────────── */
+.livefeed-root {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  margin-bottom: 20px;
+}
+
+.livefeed-video-wrap {
+  position: relative;
+  width: 100%;
+  background: #000;
+  cursor: ns-resize;
+  user-select: none;
+  min-height: 200px;
+}
+
+.livefeed-img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 480px;
+  object-fit: contain;
+}
+
+.livefeed-line-handle {
+  position: absolute;
+  left: 0; right: 0;
+  height: 10px;
+  margin-top: -5px;
+  cursor: ns-resize;
+  z-index: 10;
+}
+.livefeed-line-handle::after {
+  content: "";
+  position: absolute;
+  left: 0; right: 0; top: 4px;
+  height: 2px;
+  background: rgba(0,220,255,0.35);
+  pointer-events: none;
+}
+
+.livefeed-label-enter,
+.livefeed-label-exit {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: rgba(0,220,255,0.7);
+  pointer-events: none;
+  white-space: nowrap;
+  z-index: 5;
+}
+
+.livefeed-drag-hint {
+  position: absolute;
+  bottom: 8px; right: 10px;
+  font-size: 0.6rem;
+  color: rgba(255,255,255,0.3);
+  pointer-events: none;
+}
+
+.livefeed-stats {
+  display: flex;
+  align-items: center;
+  padding: 16px 24px 20px;
+  flex-wrap: wrap;
+  gap: 20px;
+}
+
+.livefeed-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 70px;
+}
+.livefeed-stat-label {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.livefeed-stat-value {
+  font-size: 1.6rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.livefeed-conv {
+  margin-left: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  min-width: 180px;
+}
+.livefeed-conv-label {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.livefeed-conv-value {
+  font-size: 2.4rem;
+  font-weight: 900;
+  color: var(--amber);
+  line-height: 1;
+}
+.livefeed-conv-sub {
+  font-size: 0.68rem;
+  color: var(--muted);
+}
+.livefeed-conv-bar {
+  width: 100%;
+  height: 4px;
+  background: var(--surface2);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 2px;
+}
+.livefeed-conv-fill {
+  height: 100%;
+  background: var(--amber);
+  border-radius: 2px;
+  transition: width 0.4s ease;
+}
+
+.livefeed-reset-btn {
+  padding: 7px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all .12s;
+  align-self: flex-end;
+}
+.livefeed-reset-btn:hover { border-color: var(--amber); color: var(--amber); }

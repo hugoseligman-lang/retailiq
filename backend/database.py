@@ -445,6 +445,27 @@ def is_setup_complete() -> bool:
 
 # ── Historical summaries for AI context ─────────────────────────────────────
 
+def get_history_summary(days: int) -> list:
+    """Aggregate the historical table into one row per day for the last `days` days."""
+    with get_conn() as conn:
+        rows = conn.execute("""
+            SELECT
+                date,
+                MAX(day_of_week)                AS day_of_week,
+                MAX(is_holiday)                 AS is_holiday,
+                AVG(avg_people)                 AS avg_people,
+                MAX(max_people)                 AS peak_people,
+                SUM(total_passersby)            AS passersby,
+                SUM(queue_events)               AS queue_events,
+                AVG(weather_temp)               AS avg_temp
+            FROM historical
+            WHERE date >= DATE('now', ? || ' days')
+            GROUP BY date
+            ORDER BY date DESC
+        """, (f"-{days}",)).fetchall()
+    return [dict(r) for r in rows]
+
+
 # ── Cameras ──────────────────────────────────────────────────────────────────
 
 def add_camera(name: str, mode: str, source: str, width: int = 1920, height: int = 1080) -> int:
