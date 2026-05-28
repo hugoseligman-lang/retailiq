@@ -24,7 +24,11 @@ async function post(path, body) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!r.ok) throw new Error(`POST ${path} → ${r.status}`);
+  if (!r.ok) {
+    let msg = `Request failed (${r.status})`;
+    try { const d = await r.json(); if (d.error) msg = d.error; } catch {}
+    throw new Error(msg);
+  }
   return r.json();
 }
 
