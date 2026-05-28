@@ -5,7 +5,8 @@ from camera import capture_frame
 from vision_api import detect_people
 import database as db
 import weather as wx
-from config import CAPTURE_INTERVAL
+import frame_buffer
+from config import CAPTURE_INTERVAL, CAMERA_MODE
 
 _stop   = threading.Event()
 _latest = {}
@@ -60,7 +61,15 @@ def _run():
             _maybe_midnight_rollover()
             _maybe_refresh_weather()
 
-            frame = capture_frame()
+            # VPS mode: use the frame pushed by the remote camera bridge.
+            # Local mode: capture from the configured camera.
+            if CAMERA_MODE.lower() == "vps":
+                if not frame_buffer.is_fresh(max_age=60):
+                    time.sleep(1)
+                    continue
+                frame = frame_buffer.get()
+            else:
+                frame = capture_frame()
             if frame is None:
                 print("[detector] No frame")
                 time.sleep(CAPTURE_INTERVAL)

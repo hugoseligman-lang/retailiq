@@ -29,4 +29,6 @@ DAY_END_TIME = os.getenv("DAY_END_TIME", "18:00")
 FLASK_HOST = os.getenv("FLASK_HOST", "0.0.0.0")
 FLASK_PORT = int(os.getenv("FLASK_PORT", "5050"))
 
+BRIDGE_SECRET = os.getenv("BRIDGE_SECRET", "")
+
 DB_PATH = os.path.join(os.path.dirname(__file__), "retailiq.db")

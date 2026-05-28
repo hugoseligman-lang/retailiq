@@ -1,8 +1,10 @@
+import base64
 import json
 import os
 import threading
 import time
 import requests as req
+from datetime import datetime, timezone
 from flask import Flask, jsonify, request, send_from_directory, Response
 from flask_cors import CORS
 import detector
@@ -14,7 +16,8 @@ import camera_discovery as cam_disc
 import scene_analysis as scene_ai
 import arlo_camera as arlo_cam
 import tracker
-from config import STORE_NAME
+import frame_buffer
+from config import STORE_NAME, BRIDGE_SECRET
 
 app = Flask(__name__)
 CORS(app)
@@ -483,6 +486,84 @@ def staff_checkout():
 @app.route("/api/staff/count")
 def staff_count():
     return jsonify({"staff_in_store": tracker.get_staff_count()})
+
+
+# ── VPS frame ingest ─────────────────────────────────────────────────────────
+
+@app.route("/api/ingest-frame", methods=["POST"])
+def ingest_frame():
+    """
+    Receives a JPEG frame from camera_bridge.py running at the store.
+    Accepts either:
+      - Content-Type: image/jpeg  (raw bytes)
+      - Content-Type: application/json  {"frame": "<base64 JPEG>"}
+    Requires X-Bridge-Secret header when BRIDGE_SECRET is configured.
+    """
+    if BRIDGE_SECRET:
+        secret = request.headers.get("X-Bridge-Secret", "")
+        if secret != BRIDGE_SECRET:
+            return jsonify({"error": "Forbidden"}), 403
+
+    ct = request.content_type or ""
+    if "image/jpeg" in ct or "image/jpg" in ct:
+        jpeg_bytes = request.get_data()
+    else:
+        body = request.get_json(force=True, silent=True) or {}
+        b64  = body.get("frame", "")
+        if not b64:
+            return jsonify({"error": "No frame data"}), 400
+        try:
+            jpeg_bytes = base64.b64decode(b64)
+        except Exception:
+            return jsonify({"error": "Invalid base64"}), 400
+
+    if not jpeg_bytes:
+        return jsonify({"error": "Empty frame"}), 400
+
+    frame_buffer.push(jpeg_bytes)
+    tracker.process_frame(jpeg_bytes)
+    return jsonify({"ok": True})
+
+
+# ── Store open / close ───────────────────────────────────────────────────────
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+@app.route("/api/store/status")
+def store_status():
+    status     = db.get_config("store_status", "open")
+    opened_at  = db.get_config("store_opened_at")
+    closed_at  = db.get_config("store_closed_at")
+    return jsonify({
+        "status":    status,
+        "opened_at": opened_at,
+        "closed_at": closed_at,
+    })
+
+
+@app.route("/api/store/open", methods=["POST"])
+def store_open():
+    now = _now_iso()
+    db.set_config("store_status",    "open")
+    db.set_config("store_opened_at", now)
+    tracker.resume_counting()
+    tracker.reset()
+    return jsonify({"ok": True, "status": "open", "opened_at": now})
+
+
+@app.route("/api/store/close", methods=["POST"])
+def store_close():
+    now = _now_iso()
+    db.set_config("store_status",    "closed")
+    db.set_config("store_closed_at", now)
+    tracker.pause_counting()
+    try:
+        ds.generate()
+    except Exception as e:
+        print(f"[store/close] daily summary error: {e}")
+    return jsonify({"ok": True, "status": "closed", "closed_at": now})
 
 
 # ── Arlo camera auth ──────────────────────────────────────────────────────

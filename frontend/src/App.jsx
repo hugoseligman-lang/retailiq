@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { api } from "./api";
 import Onboarding          from "./components/Onboarding";
 import CalibrationWizard   from "./components/CalibrationWizard";
+import StoreStatusBar  from "./components/StoreStatusBar";
 import LiveWidget      from "./components/LiveWidget";
 import LiveFeed        from "./components/LiveFeed";
 import TodayStats      from "./components/TodayStats";
@@ -104,6 +105,8 @@ export default function App() {
       </header>
 
       {showCalib && <CalibrationWizard onClose={() => setShowCalib(false)} />}
+
+      <StoreStatusBar />
 
       <main className="content">
         {/* ── Section 1: Raw Data ── */}

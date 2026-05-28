@@ -56,6 +56,11 @@ export const api = {
   staffIn:         ()      => post("/staff/in",  {}),
   staffOut:        ()      => post("/staff/out", {}),
 
+  // Store open / close
+  storeStatus:     ()      => get("/store/status"),
+  storeOpen:       ()      => post("/store/open",  {}),
+  storeClose:      ()      => post("/store/close", {}),
+
   // Arlo camera auth
   arloConnect:     (email, password)       => post("/arlo/connect", { email, password }),
   arloVerify:      (session_id, code)      => post("/arlo/verify", { session_id, code }),
