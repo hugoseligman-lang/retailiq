@@ -827,3 +827,73 @@ body { font-family: "Inter", system-ui, sans-serif; background: var(--bg); color
   align-self: flex-end;
 }
 .livefeed-reset-btn:hover { border-color: var(--amber); color: var(--amber); }
+
+/* Primary customer count call-out */
+.livefeed-primary {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 110px;
+}
+.livefeed-primary-label {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.livefeed-primary-value {
+  font-size: 2.8rem;
+  font-weight: 900;
+  color: var(--blue);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.livefeed-primary-sub {
+  font-size: 0.65rem;
+  color: var(--muted);
+}
+
+/* Staff check-in/out panel */
+.livefeed-staff-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 14px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  min-width: 200px;
+}
+.livefeed-staff-label {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  font-weight: 700;
+}
+.livefeed-staff-btns {
+  display: flex;
+  gap: 8px;
+}
+.livefeed-staff-btn {
+  flex: 1;
+  padding: 7px 10px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all .12s;
+}
+.livefeed-staff-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.livefeed-staff-in  { color: var(--green); }
+.livefeed-staff-in:not(:disabled):hover  { background: var(--green); color: #000; border-color: var(--green); }
+.livefeed-staff-out { color: var(--amber); }
+.livefeed-staff-out:not(:disabled):hover { background: var(--amber); color: #000; border-color: var(--amber); }
+.livefeed-staff-hint {
+  font-size: 0.60rem;
+  color: var(--muted);
+  line-height: 1.4;
+}

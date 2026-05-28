@@ -466,6 +466,25 @@ def tracker_reset():
     return jsonify({"ok": True})
 
 
+@app.route("/api/staff/in", methods=["POST"])
+def staff_checkin():
+    tracker.start()
+    tracker.staff_in()
+    return jsonify({"ok": True, "staff_in_store": tracker.get_staff_count()})
+
+
+@app.route("/api/staff/out", methods=["POST"])
+def staff_checkout():
+    tracker.start()
+    tracker.staff_out()
+    return jsonify({"ok": True, "staff_in_store": tracker.get_staff_count()})
+
+
+@app.route("/api/staff/count")
+def staff_count():
+    return jsonify({"staff_in_store": tracker.get_staff_count()})
+
+
 # ── Arlo camera auth ──────────────────────────────────────────────────────
 
 @app.route("/api/arlo/connect", methods=["POST"])

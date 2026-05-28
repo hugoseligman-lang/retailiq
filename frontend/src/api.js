@@ -52,6 +52,10 @@ export const api = {
   trackerReset:    ()      => post("/tracker/reset", {}),
   streamUrl:       ()      => (base() + "/stream"),
 
+  // Staff check-in / check-out
+  staffIn:         ()      => post("/staff/in",  {}),
+  staffOut:        ()      => post("/staff/out", {}),
+
   // Arlo camera auth
   arloConnect:     (email, password)       => post("/arlo/connect", { email, password }),
   arloVerify:      (session_id, code)      => post("/arlo/verify", { session_id, code }),

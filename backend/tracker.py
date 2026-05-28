@@ -2,38 +2,82 @@
 tracker.py — Real-time person tracking with entrance-line crossing detection.
 
 Uses OpenCV's built-in HOG person detector (offline, no API key needed).
-Generates annotated MJPEG frames and tracks:
-  - entries   : crossed the line going into the store (top→bottom)
-  - exits     : crossed the line going out (bottom→top)
-  - passersby : appeared in frame but left without crossing
-  - in_store  : net people currently inside
-  - conversion rate : entries / (entries + passersby) × 100 %
+Works with webcam, RTSP, and HTTP streams. Arlo mode is snapshot-only and
+uses detector.py instead.
+
+Tracks per session:
+  entries          : crossed the line going into the store (top->bottom)
+  exits            : crossed the line going out (bottom->top)
+  passersby        : appeared in frame but left without crossing
+  in_store         : net people currently inside
+  staff_in_store   : staff who have explicitly checked in via staff_in()
+  customers_in_store: in_store - staff_in_store  (what the owner cares about)
+  conversion_rate  : entries / (entries + passersby) x 100 %
 """
 
 import cv2
+import sys
 import threading
 import time
 import numpy as np
 from collections import OrderedDict
 
+from config import CAMERA_MODE, CAMERA_SOURCE
+
 # ── Shared state ──────────────────────────────────────────────────────────────
-_lock         = threading.Lock()
-_line_y       = 0.55          # entrance line Y as fraction of frame height
-_counts       = {"entries": 0, "exits": 0, "passersby": 0, "in_store": 0}
-_last_frame   = None           # latest annotated JPEG bytes
-_running      = False
-_stop_evt     = threading.Event()
+_lock            = threading.Lock()
+_line_y          = 0.55   # entrance line Y as fraction of frame height
+_counts          = {"entries": 0, "exits": 0, "passersby": 0, "in_store": 0}
+_staff_in_store  = 0      # incremented by staff_in(), decremented by staff_out()
+_last_frame      = None   # latest annotated JPEG bytes
+_running         = False
+_stop_evt        = threading.Event()
 
-# ── Simple centroid tracker ───────────────────────────────────────────────────
-_next_id      = 0
-_objects      = OrderedDict()  # id → (cx, cy)
-_disappeared  = OrderedDict()  # id → frames missing
-_side         = {}             # id → "above" | "below"  (side at last frame)
-_did_cross    = set()          # ids that have already crossed the line
+# ── Centroid tracker state ────────────────────────────────────────────────────
+_next_id     = 0
+_objects     = OrderedDict()   # id -> (cx, cy)
+_disappeared = OrderedDict()   # id -> consecutive frames missing
+_side        = {}              # id -> "above"|"below" at last frame
+_did_cross   = set()           # ids that have already crossed the line
 
-MAX_GONE   = 12    # frames before an object is deregistered
-MAX_DIST   = 90    # pixel distance threshold for assignment
+MAX_GONE = 12    # frames before deregistering (12 * 40ms = ~0.5s)
+MAX_DIST = 90    # max pixel distance for centroid re-assignment
 
+
+# ── Camera open (platform-aware, supports webcam / RTSP / HTTP) ───────────────
+
+def _open_capture():
+    """Return an opened cv2.VideoCapture for the configured camera, or None."""
+    mode = CAMERA_MODE.lower()
+
+    if mode == "arlo":
+        # Arlo is snapshot-only; real-time HOG tracking isn't supported.
+        # The periodic detector.py loop handles Arlo via Google Vision.
+        return None
+
+    if mode == "webcam":
+        src = int(CAMERA_SOURCE) if str(CAMERA_SOURCE).isdigit() else 0
+        if sys.platform == "win32":
+            cap = cv2.VideoCapture(src, cv2.CAP_DSHOW)  # faster on Windows
+            if not cap.isOpened():
+                cap = cv2.VideoCapture(src)
+        else:
+            cap = cv2.VideoCapture(src)
+    else:
+        # rtsp:// or http:// — pass the URL string directly
+        cap = cv2.VideoCapture(str(CAMERA_SOURCE))
+
+    if cap.isOpened():
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH,  640)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        cap.set(cv2.CAP_PROP_FPS, 30)
+        # Reduce OpenCV's internal buffer to keep frames fresh
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+    return cap
+
+
+# ── Centroid tracking helpers ─────────────────────────────────────────────────
 
 def _register(centroid, line_y_px):
     global _next_id
@@ -77,7 +121,6 @@ def _update_tracker(rects, fh):
     oids  = list(_objects)
     ocens = list(_objects.values())
 
-    # Distance matrix
     D = np.zeros((len(ocens), len(centroids)))
     for i, (ox, oy) in enumerate(ocens):
         for j, (cx, cy) in enumerate(centroids):
@@ -97,15 +140,14 @@ def _update_tracker(rects, fh):
         _objects[oid]     = centroids[c]
         _disappeared[oid] = 0
 
-        # Crossing check
         prev_side = "above" if prev_cy < line_y_px else "below"
         new_side  = "above" if new_cy  < line_y_px else "below"
         if prev_side != new_side:
             with _lock:
-                if new_side == "below":           # entering
+                if new_side == "below":
                     _counts["entries"]  += 1
                     _counts["in_store"] += 1
-                else:                             # exiting
+                else:
                     _counts["exits"]    += 1
                     _counts["in_store"] = max(0, _counts["in_store"] - 1)
             _did_cross.add(oid)
@@ -114,20 +156,18 @@ def _update_tracker(rects, fh):
         used_r.add(r)
         used_c.add(c)
 
-    # Unmatched existing → increment disappeared
     for i, oid in enumerate(oids):
         if i not in used_r:
             _disappeared[oid] += 1
             if _disappeared[oid] > MAX_GONE:
                 _deregister(oid)
 
-    # Unmatched new centroids → new objects
     for j, c in enumerate(centroids):
         if j not in used_c:
             _register(c, line_y_px)
 
 
-# ── Tracking loop ─────────────────────────────────────────────────────────────
+# ── Main tracking loop ────────────────────────────────────────────────────────
 
 def _loop():
     global _last_frame, _running
@@ -135,31 +175,62 @@ def _loop():
     hog = cv2.HOGDescriptor()
     hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
 
-    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)   # CAP_DSHOW is faster on Windows
+    cap = _open_capture()
+    if cap is None:
+        print("[tracker] Arlo mode — HOG tracker disabled; using detector.py snapshot loop")
+        _running = False
+        return
     if not cap.isOpened():
-        cap = cv2.VideoCapture(0)              # fallback
-    if not cap.isOpened():
-        print("[tracker] ERROR: cannot open webcam 0")
+        print(f"[tracker] ERROR: cannot open camera (mode={CAMERA_MODE} source={CAMERA_SOURCE})")
         _running = False
         return
 
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH,  640)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-    cap.set(cv2.CAP_PROP_FPS, 30)
+    print(f"[tracker] Started (mode={CAMERA_MODE} source={CAMERA_SOURCE})")
 
-    print("[tracker] Webcam opened — streaming at 640×480")
+    fail_count = 0
+    MAX_FAILS  = 30   # ~1.2s of consecutive failures before reconnecting
 
     while not _stop_evt.is_set():
         ret, frame = cap.read()
+
+        # ── Reconnect on sustained failure ────────────────────────────────────
         if not ret:
-            time.sleep(0.05)
+            fail_count += 1
+            if fail_count >= MAX_FAILS:
+                print("[tracker] Camera disconnected — reconnecting...")
+                cap.release()
+                # Exponential back-off: 2s, 5s, 10s, 30s, then repeat 30s
+                delays = [2, 5, 10, 30]
+                reconnected = False
+                for delay in delays:
+                    time.sleep(delay)
+                    cap = _open_capture()
+                    if cap and cap.isOpened():
+                        fail_count = 0
+                        reconnected = True
+                        print("[tracker] Camera reconnected")
+                        break
+                    print(f"[tracker] Reconnect failed — retrying in {delay*2}s...")
+                if not reconnected:
+                    # Keep trying every 30s until the camera comes back
+                    while not _stop_evt.is_set():
+                        time.sleep(30)
+                        cap = _open_capture()
+                        if cap and cap.isOpened():
+                            fail_count = 0
+                            print("[tracker] Camera reconnected (long wait)")
+                            break
+            else:
+                time.sleep(0.05)
             continue
 
+        fail_count = 0
+
+        # ── Detect on half-size frame for speed ───────────────────────────────
         fh, fw = frame.shape[:2]
         line_y_px = int(_line_y * fh)
 
-        # Detect on half-size frame for speed
-        small = cv2.resize(frame, (320, 240))
+        small    = cv2.resize(frame, (320, 240))
         rects_s, _ = hog.detectMultiScale(
             small, winStride=(8, 8), padding=(4, 4), scale=1.05
         )
@@ -168,18 +239,17 @@ def _loop():
         _update_tracker(rects, fh)
 
         with _lock:
-            c = dict(_counts)
+            c     = dict(_counts)
+            staff = _staff_in_store
 
-        # ── Draw overlays ──────────────────────────────────────────────────
+        # ── Draw overlays ──────────────────────────────────────────────────────
 
-        # Bounding boxes + centroids
         for (x, y, bw, bh) in rects:
-            cy = y + bh // 2
+            cy     = y + bh // 2
             colour = (40, 220, 40) if cy > line_y_px else (40, 220, 220)
             cv2.rectangle(frame, (x, y), (x + bw, y + bh), colour, 2)
             cv2.circle(frame, (x + bw // 2, cy), 5, colour, -1)
 
-        # Entrance line with arrows indicating direction
         cv2.line(frame, (0, line_y_px), (fw, line_y_px), (0, 220, 255), 2)
         cv2.putText(frame, "v ENTER", (fw // 2 - 48, line_y_px + 18),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 255), 1)
@@ -191,30 +261,33 @@ def _loop():
         cv2.rectangle(overlay, (0, 0), (fw, 56), (15, 15, 15), -1)
         frame = cv2.addWeighted(overlay, 0.65, frame, 0.35, 0)
 
-        total      = c["entries"] + c["passersby"]
-        conv       = round(c["entries"] / total * 100) if total else 0
-        in_store   = max(0, c["in_store"])
+        total     = c["entries"] + c["passersby"]
+        conv      = round(c["entries"] / total * 100) if total else 0
+        customers = max(0, c["in_store"] - staff)
 
         stats = [
-            ("In Store",    str(in_store)),
-            ("Entries",     str(c["entries"])),
-            ("Exits",       str(c["exits"])),
-            ("Passersby",   str(c["passersby"])),
-            ("Conversion",  f"{conv}%"),
+            ("Customers", str(customers)),
+            ("Entries",   str(c["entries"])),
+            ("Exits",     str(c["exits"])),
+            ("Passersby", str(c["passersby"])),
+            ("Conv",      f"{conv}%"),
         ]
+        if staff:
+            stats.append(("Staff",  str(staff)))
+
         for i, (label, val) in enumerate(stats):
-            x0 = 12 + i * 128
+            x0 = 10 + i * 108
             cv2.putText(frame, label, (x0, 18),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.40, (160, 160, 160), 1)
-            cv2.putText(frame, val, (x0, 42),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.72, (255, 255, 255), 2)
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.38, (160, 160, 160), 1)
+            cv2.putText(frame, val,   (x0, 42),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.68, (255, 255, 255), 2)
 
         ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 78])
         if ok:
             with _lock:
                 _last_frame = buf.tobytes()
 
-        time.sleep(0.04)   # ~25 fps
+        time.sleep(0.04)   # ~25 fps cap
 
     cap.release()
     _running = False
@@ -251,13 +324,33 @@ def reset():
     _did_cross.clear()
 
 
+def staff_in():
+    global _staff_in_store
+    with _lock:
+        _staff_in_store += 1
+
+
+def staff_out():
+    global _staff_in_store
+    with _lock:
+        _staff_in_store = max(0, _staff_in_store - 1)
+
+
+def get_staff_count() -> int:
+    with _lock:
+        return _staff_in_store
+
+
 def get_counts() -> dict:
     with _lock:
-        c = dict(_counts)
+        c     = dict(_counts)
+        staff = _staff_in_store
     total = c["entries"] + c["passersby"]
-    c["conversion_rate"] = round(c["entries"] / total * 100) if total else 0
-    c["line_y"] = _line_y
-    c["running"] = _running
+    c["conversion_rate"]    = round(c["entries"] / total * 100) if total else 0
+    c["staff_in_store"]     = staff
+    c["customers_in_store"] = max(0, c["in_store"] - staff)
+    c["line_y"]             = _line_y
+    c["running"]            = _running
     return c
 
 

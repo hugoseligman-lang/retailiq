@@ -44,19 +44,25 @@ def _frame_from_http(url: str) -> bytes | None:
 
 
 def _frame_from_arlo() -> bytes | None:
+    """Get a snapshot from the active Arlo session (set up via onboarding)."""
     try:
-        import pyaarlo
-        ar = pyaarlo.PyArlo(username=ARLO_EMAIL, password=ARLO_PASSWORD,
-                            tfa_type="SMS", tfa_source="console")
-        cameras = ar.cameras
-        cam = next((c for c in cameras if ARLO_DEVICE.lower() in c.name.lower()), None)
-        if cam is None:
-            print(f"[camera] Arlo device '{ARLO_DEVICE}' not found")
+        import base64
+        import arlo_camera as ac
+        session = ac.get_active_session()
+        if not session:
+            print("[camera] No active Arlo session — complete Arlo setup in onboarding first")
             return None
-        snapshot_url = cam.get_snapshot()
-        if snapshot_url:
-            r = requests.get(snapshot_url, timeout=10)
-            return r.content if r.ok else None
+        if not session.cameras:
+            print("[camera] No Arlo cameras found in active session")
+            return None
+        # Use ARLO_DEVICE name if configured, otherwise use first camera
+        cam = (
+            next((c for c in session.cameras
+                  if ARLO_DEVICE and ARLO_DEVICE.lower() in c["name"].lower()),
+                 session.cameras[0])
+        )
+        b64 = session.get_snapshot_b64(cam["id"])
+        return base64.b64decode(b64) if b64 else None
     except Exception as e:
         print(f"[camera] Arlo error: {e}")
     return None
