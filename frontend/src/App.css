@@ -244,21 +244,44 @@ body { font-family: "Inter", system-ui, sans-serif; background: var(--bg); color
 
 .ob-card {
   background: var(--surface); border: 1px solid var(--border);
-  border-radius: 16px; padding: 40px; width: 100%; max-width: 480px;
+  border-radius: 16px; padding: 40px; width: 100%; max-width: 500px;
   display: flex; flex-direction: column;
+  box-shadow: 0 24px 64px rgba(0,0,0,0.5);
 }
 
 .ob-logo {
-  font-size: 1.15rem; font-weight: 800; letter-spacing: -0.02em;
+  font-size: 1.25rem; font-weight: 800; letter-spacing: -0.02em;
   color: var(--text); text-align: center; margin-bottom: 28px;
 }
 .ob-logo span { color: var(--amber); }
 
-/* Progress dots */
-.ob-progress { display: flex; justify-content: center; gap: 8px; margin-bottom: 28px; }
-.ob-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border); transition: all 0.2s; }
-.ob-dot-active { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
-.ob-dot-done   { background: var(--green); }
+/* Progress bar with labels */
+.ob-progress-bar {
+  display: flex; align-items: flex-start; justify-content: center;
+  gap: 0; margin-bottom: 32px; position: relative;
+}
+.ob-progress-bar::before {
+  content: ""; position: absolute; top: 7px; left: 50%;
+  transform: translateX(-50%); width: 70%; height: 2px;
+  background: var(--border); z-index: 0;
+}
+.ob-prog-step {
+  display: flex; flex-direction: column; align-items: center; gap: 5px;
+  flex: 1; position: relative; z-index: 1;
+}
+.ob-prog-dot {
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--border); border: 2px solid var(--border);
+  transition: all 0.2s;
+}
+.ob-prog-label {
+  font-size: 0.6rem; font-weight: 600; color: var(--border);
+  text-transform: uppercase; letter-spacing: 0.06em; transition: color 0.2s;
+}
+.ob-prog-step.active .ob-prog-dot  { background: var(--amber); border-color: var(--amber); box-shadow: 0 0 10px rgba(245,158,11,0.5); }
+.ob-prog-step.active .ob-prog-label{ color: var(--amber); }
+.ob-prog-step.done .ob-prog-dot    { background: var(--green); border-color: var(--green); }
+.ob-prog-step.done .ob-prog-label  { color: var(--green); }
 
 /* Step container */
 .ob-step { display: flex; flex-direction: column; gap: 18px; }
@@ -266,10 +289,42 @@ body { font-family: "Inter", system-ui, sans-serif; background: var(--bg); color
 .ob-step-title { font-size: 1.2rem; font-weight: 700; color: var(--text); text-align: center; }
 .ob-step-sub   { font-size: 0.8rem; color: var(--muted); text-align: center; line-height: 1.65; }
 
+/* Install steps (connect page) */
+.ob-install-steps {
+  display: flex; flex-direction: column; gap: 0;
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 10px; overflow: hidden;
+}
+.ob-install-step {
+  display: flex; align-items: flex-start; gap: 14px;
+  padding: 14px 16px; border-bottom: 1px solid var(--border);
+}
+.ob-install-step:last-child { border-bottom: none; }
+.ob-install-num {
+  width: 24px; height: 24px; border-radius: 50%;
+  background: var(--amber); color: #000; font-size: 0.72rem; font-weight: 800;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.ob-install-text { font-size: 0.8rem; color: var(--text); line-height: 1.5; }
+.ob-install-text strong { color: var(--text); }
+
 /* Welcome */
-.ob-welcome { align-items: center; text-align: center; }
+.ob-welcome { align-items: center; text-align: center; gap: 20px; }
 .ob-welcome-title { font-size: 1.55rem; font-weight: 800; letter-spacing: -0.03em; color: var(--text); }
 .ob-welcome-sub   { font-size: 0.82rem; color: var(--muted); line-height: 1.7; }
+
+/* Feature list */
+.ob-features {
+  display: flex; flex-direction: column; gap: 0; width: 100%;
+  background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
+}
+.ob-feature-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 11px 16px; border-bottom: 1px solid var(--border);
+  font-size: 0.8rem; color: var(--text);
+}
+.ob-feature-row:last-child { border-bottom: none; }
+.ob-feature-icon { font-size: 1.1rem; width: 24px; text-align: center; flex-shrink: 0; }
 
 /* Fields */
 .ob-field { display: flex; flex-direction: column; gap: 6px; }
@@ -366,13 +421,19 @@ body { font-family: "Inter", system-ui, sans-serif; background: var(--bg); color
 /* Done / success screen */
 .ob-done { display: flex; flex-direction: column; align-items: center; gap: 14px; text-align: center; padding: 8px 0; }
 .ob-done-check {
-  width: 64px; height: 64px; border-radius: 50%;
+  width: 72px; height: 72px; border-radius: 50%;
   background: rgba(16,185,129,0.12); border: 2px solid var(--green);
   display: flex; align-items: center; justify-content: center;
-  font-size: 1.8rem; color: var(--green);
+  font-size: 2rem; color: var(--green);
 }
 .ob-done-title { font-size: 1.3rem; font-weight: 800; color: var(--text); }
-.ob-done-sub   { font-size: 0.8rem; color: var(--muted); line-height: 1.6; max-width: 320px; }
+.ob-done-sub   { font-size: 0.82rem; color: var(--muted); line-height: 1.6; max-width: 320px; }
+.ob-done-tip {
+  font-size: 0.72rem; color: var(--muted);
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 14px;
+}
+.ob-done-tip strong { color: var(--text); }
 
 /* ── Calibration trigger button ───────────────────────────────────────────── */
 .calib-trigger-btn {

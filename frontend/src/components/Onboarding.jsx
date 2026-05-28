@@ -24,13 +24,18 @@ const ADMIN1_STATE = {
 };
 
 const CAMERA_MODES = [
-  { id: "webcam", label: "USB Webcam", icon: "📷", desc: "Built-in or USB camera" },
-  { id: "rtsp",   label: "IP Camera",  icon: "📡", desc: "RTSP network stream" },
-  { id: "http",   label: "Web Stream", icon: "🌐", desc: "HTTP stream or snapshot" },
-  { id: "arlo",   label: "Arlo",       icon: "🔒", desc: "Arlo wireless camera" },
+  { id: "webcam", label: "USB / Webcam",  icon: "📷", desc: "Built-in or USB camera" },
+  { id: "rtsp",   label: "IP Camera",     icon: "📡", desc: "Network / CCTV camera" },
+  { id: "http",   label: "Web Stream",    icon: "🌐", desc: "HTTP stream or snapshot" },
+  { id: "arlo",   label: "Arlo Camera",   icon: "🔒", desc: "Arlo wireless camera" },
 ];
 
-const PROGRESS_STEPS = ["store", "location", "camera", "schedule"];
+const PROGRESS_STEPS = [
+  { id: "store",    label: "Store" },
+  { id: "location", label: "Location" },
+  { id: "camera",   label: "Camera" },
+  { id: "schedule", label: "Preferences" },
+];
 
 export default function Onboarding({ startAtConnect, onComplete }) {
   const [step, setStep] = useState(startAtConnect ? "connect" : "welcome");
@@ -95,7 +100,7 @@ export default function Onboarding({ startAtConnect, onComplete }) {
       setStep("welcome");
     } catch {
       setConnectError(
-        "Could not reach the backend. Make sure it is running on this computer (python main.py) and try again."
+        "Could not connect. Make sure the RetailIQ app is running on this computer, then try again."
       );
     } finally {
       setConnectLoading(false);
@@ -158,7 +163,7 @@ export default function Onboarding({ startAtConnect, onComplete }) {
       });
       setDone(true);
     } catch {
-      setSubmitError("Could not save settings — check the backend is still running.");
+      setSubmitError("Could not save — make sure the RetailIQ app is still running and try again.");
     } finally {
       setSubmitting(false);
     }
@@ -176,7 +181,7 @@ export default function Onboarding({ startAtConnect, onComplete }) {
     return true;
   }
 
-  const progressIdx = PROGRESS_STEPS.indexOf(step);
+  const progressIdx = PROGRESS_STEPS.findIndex(s => s.id === step);
 
   // ── Done ───────────────────────────────────────────────────────────────────
 
@@ -186,13 +191,15 @@ export default function Onboarding({ startAtConnect, onComplete }) {
         <div className="ob-logo"><span>Retail</span>IQ</div>
         <div className="ob-done">
           <div className="ob-done-check">✓</div>
-          <h2 className="ob-done-title">{form.store_name} is live</h2>
+          <h2 className="ob-done-title">{form.store_name} is ready</h2>
           <p className="ob-done-sub">
-            Your dashboard is ready. Start the camera feed on the backend to begin tracking visitors.
+            Your dashboard is set up. We recommend running the <strong>Calibration Wizard</strong> next
+            — it uses AI to map your store zones automatically.
           </p>
           <button className="ob-btn ob-primary ob-lg" onClick={onComplete}>
             Open Dashboard →
           </button>
+          <p className="ob-done-tip">Tip: tap <strong>⚙ Calibrate</strong> in the top bar to run the wizard</p>
         </div>
       </div>
     </div>
@@ -203,24 +210,50 @@ export default function Onboarding({ startAtConnect, onComplete }) {
       <div className="ob-card">
         <div className="ob-logo"><span>Retail</span>IQ</div>
 
+        {/* Progress bar with labels */}
         {progressIdx >= 0 && (
-          <div className="ob-progress">
+          <div className="ob-progress-bar">
             {PROGRESS_STEPS.map((s, i) => (
-              <div key={s} className={`ob-dot${i < progressIdx ? " ob-dot-done" : i === progressIdx ? " ob-dot-active" : ""}`} />
+              <div key={s.id} className={`ob-prog-step${i < progressIdx ? " done" : i === progressIdx ? " active" : ""}`}>
+                <div className="ob-prog-dot" />
+                <div className="ob-prog-label">{s.label}</div>
+              </div>
             ))}
           </div>
         )}
 
-        {/* Connect Backend */}
+        {/* ── Connect ── */}
         {step === "connect" && (
           <div className="ob-step">
-            <div className="ob-hero-icon">🔌</div>
-            <h2 className="ob-step-title">Connect Your Backend</h2>
+            <div className="ob-hero-icon">🖥️</div>
+            <h2 className="ob-step-title">Start the RetailIQ App</h2>
             <p className="ob-step-sub">
-              Open this page on the computer running the RetailIQ backend, then click Connect.
+              Open this page on the computer that will run RetailIQ, then follow these steps:
             </p>
+
+            <div className="ob-install-steps">
+              <div className="ob-install-step">
+                <div className="ob-install-num">1</div>
+                <div className="ob-install-text">
+                  <strong>Open the RetailIQ folder</strong> on this computer
+                </div>
+              </div>
+              <div className="ob-install-step">
+                <div className="ob-install-num">2</div>
+                <div className="ob-install-text">
+                  <strong>Double-click "Start RetailIQ"</strong> — a terminal window will appear
+                </div>
+              </div>
+              <div className="ob-install-step">
+                <div className="ob-install-num">3</div>
+                <div className="ob-install-text">
+                  <strong>Keep that window open</strong>, then click Connect below
+                </div>
+              </div>
+            </div>
+
             <div className="ob-field">
-              <label>Backend URL</label>
+              <label>App Address</label>
               <input
                 className="ob-input"
                 value={form.backend_url}
@@ -229,10 +262,12 @@ export default function Onboarding({ startAtConnect, onComplete }) {
                 autoFocus
               />
               <span className="ob-hint">
-                Default is http://localhost:5050. Change only if accessing over a local network.
+                Leave this as-is unless your IT team told you a different address.
               </span>
             </div>
+
             {connectError && <div className="ob-error">{connectError}</div>}
+
             <div className="ob-nav ob-nav-end">
               <button className="ob-btn ob-primary" onClick={testAndConnect} disabled={connectLoading}>
                 {connectLoading ? "Connecting…" : "Connect →"}
@@ -241,7 +276,7 @@ export default function Onboarding({ startAtConnect, onComplete }) {
           </div>
         )}
 
-        {/* Welcome */}
+        {/* ── Welcome ── */}
         {step === "welcome" && (
           <div className="ob-step ob-welcome">
             <div className="ob-hero-icon">🏪</div>
@@ -250,22 +285,40 @@ export default function Onboarding({ startAtConnect, onComplete }) {
               AI-powered retail analytics for your store.<br />
               Setup takes under 2 minutes.
             </p>
+            <div className="ob-features">
+              <div className="ob-feature-row">
+                <span className="ob-feature-icon">👥</span>
+                <span>Live visitor counting &amp; zone traffic</span>
+              </div>
+              <div className="ob-feature-row">
+                <span className="ob-feature-icon">🧠</span>
+                <span>AI insights &amp; daily performance summaries</span>
+              </div>
+              <div className="ob-feature-row">
+                <span className="ob-feature-icon">🔔</span>
+                <span>Queue alerts when staff are needed</span>
+              </div>
+              <div className="ob-feature-row">
+                <span className="ob-feature-icon">🌦️</span>
+                <span>Weather-aware traffic context</span>
+              </div>
+            </div>
             <button className="ob-btn ob-primary ob-lg" onClick={advance}>
               Get Started →
             </button>
           </div>
         )}
 
-        {/* Store */}
+        {/* ── Store ── */}
         {step === "store" && (
           <div className="ob-step">
             <h2 className="ob-step-title">Your Store</h2>
-            <p className="ob-step-sub">Basic details about the store you're monitoring.</p>
+            <p className="ob-step-sub">This appears in your dashboard and daily reports.</p>
             <div className="ob-field">
               <label>Store Name</label>
               <input
                 className="ob-input"
-                placeholder="e.g. Main Street Retail"
+                placeholder="e.g. George Street Store"
                 value={form.store_name}
                 onChange={e => set("store_name", e.target.value)}
                 autoFocus
@@ -283,7 +336,7 @@ export default function Onboarding({ startAtConnect, onComplete }) {
           </div>
         )}
 
-        {/* Location */}
+        {/* ── Location ── */}
         {step === "location" && (
           <div className="ob-step">
             <h2 className="ob-step-title">Store Location</h2>
@@ -311,12 +364,12 @@ export default function Onboarding({ startAtConnect, onComplete }) {
               )}
             </div>
             {form.lat && (
-              <div className="ob-loc-selected">📍 {form.location_display} — coordinates saved</div>
+              <div className="ob-loc-selected">📍 {form.location_display} — location saved</div>
             )}
           </div>
         )}
 
-        {/* Camera */}
+        {/* ── Camera ── */}
         {step === "camera" && (
           <div className="ob-step">
             <h2 className="ob-step-title">Camera Setup</h2>
@@ -336,82 +389,85 @@ export default function Onboarding({ startAtConnect, onComplete }) {
             </div>
             {form.camera_mode === "webcam" && (
               <div className="ob-field">
-                <label>Camera Index</label>
+                <label>Camera Number</label>
                 <input className="ob-input ob-input-sm" type="number" min="0" max="9"
                   value={form.camera_source} onChange={e => set("camera_source", e.target.value)} />
-                <span className="ob-hint">0 = built-in webcam · 1 = first external USB</span>
+                <span className="ob-hint">
+                  Use <strong>0</strong> for a built-in or first USB camera. Try <strong>1</strong> if you have multiple cameras.
+                </span>
               </div>
             )}
             {(form.camera_mode === "rtsp" || form.camera_mode === "http") && (
               <div className="ob-field">
-                <label>Stream URL</label>
+                <label>Camera Stream Address</label>
                 <input className="ob-input"
                   placeholder={form.camera_mode === "rtsp"
-                    ? "rtsp://admin:pass@192.168.1.100:554/stream"
+                    ? "rtsp://admin:password@192.168.1.100:554/stream"
                     : "http://192.168.1.100:8080/video"}
                   value={form.camera_source} onChange={e => set("camera_source", e.target.value)} />
+                <span className="ob-hint">Found in your camera's settings app or supplied by your installer.</span>
               </div>
             )}
             {form.camera_mode === "arlo" && (<>
               <div className="ob-field">
-                <label>Arlo Email</label>
+                <label>Arlo Account Email</label>
                 <input className="ob-input" type="email" placeholder="you@example.com"
                   value={form.arlo_email} onChange={e => set("arlo_email", e.target.value)} />
               </div>
               <div className="ob-field">
-                <label>Arlo Password</label>
+                <label>Arlo Account Password</label>
                 <input className="ob-input" type="password"
                   value={form.arlo_password} onChange={e => set("arlo_password", e.target.value)} />
               </div>
               <div className="ob-field">
-                <label>Device Name</label>
-                <input className="ob-input" placeholder="e.g. Front Door"
+                <label>Camera Name</label>
+                <input className="ob-input" placeholder="e.g. Front Entrance"
                   value={form.arlo_device} onChange={e => set("arlo_device", e.target.value)} />
               </div>
             </>)}
           </div>
         )}
 
-        {/* Schedule + Review */}
+        {/* ── Preferences + Review ── */}
         {step === "schedule" && (
           <div className="ob-step">
             <h2 className="ob-step-title">Preferences</h2>
-            <p className="ob-step-sub">Configure AI scheduling and detection sensitivity.</p>
+            <p className="ob-step-sub">A few last settings — the defaults work well for most stores.</p>
             <div className="ob-two-col">
               <div className="ob-field">
-                <label>Day End Time</label>
+                <label>Day Ends At</label>
                 <input className="ob-input" type="time"
                   value={form.day_end_time} onChange={e => set("day_end_time", e.target.value)} />
-                <span className="ob-hint">Daily AI summary generates at this time</span>
+                <span className="ob-hint">Daily AI summary is generated at this time</span>
               </div>
               <div className="ob-field">
-                <label>Capture Interval (s)</label>
+                <label>Analysis Speed (sec)</label>
                 <input className="ob-input ob-input-sm" type="number" min="1" max="60"
                   value={form.capture_interval} onChange={e => set("capture_interval", e.target.value)} />
-                <span className="ob-hint">Seconds between camera frames</span>
+                <span className="ob-hint">How often to analyse the camera. 3 sec is recommended.</span>
               </div>
             </div>
             <div className="ob-field">
-              <label>Queue Threshold (people)</label>
+              <label>Queue Alert — people in zone</label>
               <input className="ob-input ob-input-sm" type="number" min="1" max="20"
                 value={form.queue_threshold} onChange={e => set("queue_threshold", e.target.value)} />
-              <span className="ob-hint">How many people in a zone triggers a queue alert</span>
+              <span className="ob-hint">Alert triggers when this many people are waiting in one area</span>
             </div>
             <div className="ob-review">
-              <div className="ob-review-title">Summary</div>
+              <div className="ob-review-title">Summary — please confirm</div>
               <div className="ob-review-grid">
                 <span>Store</span>     <span>{form.store_name}</span>
                 <span>Location</span>  <span>{form.location_display || `${form.lat}, ${form.lon}`}</span>
                 <span>State</span>     <span>{form.state}</span>
                 <span>Camera</span>    <span>{CAMERA_MODES.find(m => m.id === form.camera_mode)?.label}</span>
-                <span>Day end</span>   <span>{form.day_end_time}</span>
+                <span>Day ends</span>  <span>{form.day_end_time}</span>
               </div>
             </div>
             {submitError && <div className="ob-error">{submitError}</div>}
           </div>
         )}
 
-        {/* Nav bar (all steps except connect and welcome) */}
+        {/* Nav (all steps except connect and welcome) */}
         {step !== "connect" && step !== "welcome" && (
           <div className="ob-nav">
             <button className="ob-btn ob-ghost" onClick={goBack}>← Back</button>
