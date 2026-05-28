@@ -17,6 +17,10 @@ export default function App() {
   const [appState, setAppState] = useState("loading");
 
   useEffect(() => {
+    // ?onboarding flag lets you preview/demo the onboarding flow at any time
+    if (new URLSearchParams(window.location.search).get("onboarding") !== null) {
+      setAppState("connect"); return;
+    }
     const hasBackend = !!localStorage.getItem("iq_backend");
     const isDev = import.meta.env.DEV;
     api.setupStatus()
