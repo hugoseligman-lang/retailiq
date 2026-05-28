@@ -43,7 +43,7 @@ def _scheduler():
 
 
 def handle_shutdown(sig, frame):
-    print("\n[main] Shutting down…")
+    print("\n[main] Shutting down...")
     detector.stop()
     sys.exit(0)
 
@@ -52,15 +52,15 @@ if __name__ == "__main__":
     signal.signal(signal.SIGINT,  handle_shutdown)
     signal.signal(signal.SIGTERM, handle_shutdown)
 
-    print("[main] Initialising database…")
+    print("[main] Initialising database...")
     db.init_db()
 
-    print("[main] Starting camera detector…")
+    print("[main] Starting camera detector...")
     detector.start(daemon=True)
 
-    print("[main] Starting scheduler (insights + summary)…")
+    print("[main] Starting scheduler (insights + summary)...")
     t = threading.Thread(target=_scheduler, daemon=True)
     t.start()
 
-    print(f"[main] API server → http://{FLASK_HOST}:{FLASK_PORT}")
+    print(f"[main] API server -> http://{FLASK_HOST}:{FLASK_PORT}")
     app.run(host=FLASK_HOST, port=FLASK_PORT, debug=False, use_reloader=False)

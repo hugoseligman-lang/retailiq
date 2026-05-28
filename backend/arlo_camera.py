@@ -1,9 +1,8 @@
 """
-arlo_camera.py — Direct Arlo REST implementation with RSA password encryption.
+arlo_camera.py — Direct Arlo REST implementation using cloudscraper.
 
-Arlo's API requires the password to be RSA-encrypted using a public key fetched
-from their server before login. This replaces pyaarlo (which has a broken 2FA
-handler in v0.8.0.19) while keeping the same public API surface.
+Arlo's auth endpoint is behind Cloudflare; cloudscraper handles that.
+The password is sent as plaintext (this is what Arlo's own web app does).
 
 Flow:
   1. login(email, password)        → {session_id, needs_2fa, cameras?}
@@ -33,7 +32,6 @@ _CAMERA_TYPES = {
     "arlo", "arlovms3030", "arlovmc2030", "arloavd1001",
 }
 
-# ── RSA password encryption ───────────────────────────────────────────────────
 
 def _make_scraper():
     try:
@@ -44,39 +42,21 @@ def _make_scraper():
         return requests.Session()
 
 
-def _encrypt_password(password: str, pub_key_hex: str, exponent) -> str:
-    """
-    RSA-encrypt the password using Arlo's public key (hex-encoded modulus).
-    Falls back to plaintext if pycryptodome is unavailable.
-    """
-    try:
-        from Crypto.PublicKey import RSA
-        from Crypto.Cipher   import PKCS1_v1_5
-        n   = int(pub_key_hex, 16)
-        e   = int(exponent)
-        key = RSA.construct((n, e))
-        enc = PKCS1_v1_5.new(key).encrypt(password.encode("utf-8"))
-        return base64.b64encode(enc).decode("utf-8")
-    except Exception as exc:
-        log.warning("RSA encrypt failed (%s) — using plaintext", exc)
-        return password
-
-
 # ── Session ───────────────────────────────────────────────────────────────────
 
 class ArloSession:
     def __init__(self, session_id: str, email: str, password: str):
-        self.session_id         = session_id
-        self.email              = email
-        self.password           = password
-        self.token: str         = ""
-        self.user_id: str       = ""
-        self.factor_id: str     = ""
+        self.session_id            = session_id
+        self.email                 = email
+        self.password              = password
+        self.token: str            = ""
+        self.user_id: str          = ""
+        self.factor_id: str        = ""
         self.factor_auth_code: str = ""
-        self.cameras: list      = []
-        self.status             = "idle"   # idle|needs_2fa|connected|error
-        self.error              = ""
-        self.sc                 = _make_scraper()
+        self.cameras: list         = []
+        self.status                = "idle"   # idle|needs_2fa|connected|error
+        self.error                 = ""
+        self.sc                    = _make_scraper()
         self._state_file = STATE_DIR / (
             email.replace("@", "_").replace(".", "_") + ".json"
         )
@@ -139,28 +119,13 @@ class ArloSession:
         self.token = ""
         return False
 
-    # ── Login step 1: email + RSA-encrypted password ──────────────────────────
+    # ── Login ─────────────────────────────────────────────────────────────────
 
     def start_login(self):
         try:
-            # Fetch RSA public key
-            nonce = str(int(time.time() * 1000))
-            kr = self._get(
-                f"{AUTH_BASE}/api/getFactors",
-                params={"data": json.dumps({"factorNonce": nonce})},
-            )
-            kd = kr.get("data") or {}
-            pub_key  = kd.get("pubKey",  "")
-            exponent = kd.get("exponent", 65537)
-
-            # Encrypt password
-            enc_pw = _encrypt_password(self.password, pub_key, exponent) \
-                     if pub_key else self.password
-
-            # Login
             body = self._post(
                 f"{AUTH_BASE}/api/auth",
-                {"email": self.email, "password": enc_pw},
+                {"email": self.email, "password": self.password},
             )
             meta = body.get("meta", {})
             code = meta.get("code", 0)
@@ -170,7 +135,15 @@ class ArloSession:
                 self.error  = "Incorrect password — please check and try again."
                 return
 
-            if code not in (200, 0, None) and code != 400:
+            if code == 403:
+                self.status = "error"
+                self.error  = (
+                    "Account locked due to too many failed attempts. "
+                    "Wait 15–30 minutes or check your email for an unlock link."
+                )
+                return
+
+            if code not in (200, 0, None):
                 self.status = "error"
                 self.error  = meta.get("message", f"Login error {code}")
                 return

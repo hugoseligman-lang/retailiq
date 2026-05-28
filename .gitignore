@@ -13,8 +13,10 @@ backend/.env
 frontend/.env
 frontend/.env.local
 
-# Database (legacy SQLite — now using Supabase)
+# SQLite database and WAL journal files
 *.db
+*.db-shm
+*.db-wal
 
 # Node
 node_modules/
