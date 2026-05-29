@@ -28,6 +28,22 @@ async function post(path, body) {
   return r.json();
 }
 
+async function adminGet(path, pw) {
+  const r = await fetch(base() + path, { headers: { "X-Admin-Password": pw } });
+  if (!r.ok) throw new Error(`GET ${path} → ${r.status}`);
+  return r.json();
+}
+
+async function adminPost(path, pw, body = {}) {
+  const r = await fetch(base() + path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Admin-Password": pw },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(`POST ${path} → ${r.status}`);
+  return r.json();
+}
+
 export const api = {
   live:            ()        => get("/live"),
   today:           ()        => get("/today"),
@@ -60,6 +76,21 @@ export const api = {
   storeStatus:     ()      => get("/store/status"),
   storeOpen:       ()      => post("/store/open",  {}),
   storeClose:      ()      => post("/store/close", {}),
+
+  // PIN auth
+  authRequired:    ()           => get("/auth/required"),
+  verifyPin:       (pin)        => post("/auth/pin", { pin }),
+  authVerify:      (token)      => fetch(base() + "/auth/verify", {
+                                     headers: { "X-Session-Token": token }
+                                   }).then(r => r.json()),
+
+  // Admin
+  adminStatus:     (pw)              => adminGet("/admin/status", pw),
+  adminPause:      (pw)              => adminPost("/admin/pause",  pw),
+  adminResume:     (pw)              => adminPost("/admin/resume", pw),
+  adminRestart:    (pw)              => adminPost("/admin/restart", pw),
+  adminGetCamera:  (pw)              => adminGet("/admin/camera", pw),
+  adminSetCamera:  (pw, mode, src)   => adminPost("/admin/camera", pw, { camera_mode: mode, camera_source: src }),
 
   // Arlo camera auth
   arloConnect:     (email, password)       => post("/arlo/connect", { email, password }),

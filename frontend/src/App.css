@@ -944,3 +944,56 @@ body { font-family: "Inter", system-ui, sans-serif; background: var(--bg); color
   .store-status-bar { flex-direction: column; gap: 10px; align-items: flex-start; padding: 12px 16px; }
   .store-status-btn { width: 100%; text-align: center; }
 }
+
+/* ── PIN gate ────────────────────────────────────────────────────────────── */
+.pin-shell {
+  min-height: 100vh; display: flex; align-items: center; justify-content: center;
+  background: var(--bg); padding: 24px;
+}
+.pin-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 16px; padding: 40px 36px; width: 100%; max-width: 340px;
+  display: flex; flex-direction: column; align-items: center; gap: 20px;
+  box-shadow: 0 24px 64px rgba(0,0,0,0.5);
+}
+.pin-logo {
+  font-size: 1.3rem; font-weight: 800; letter-spacing: -0.02em; color: var(--text);
+}
+.pin-logo span { color: var(--amber); }
+.pin-title {
+  font-size: 0.82rem; color: var(--muted); text-align: center; margin: -8px 0 4px;
+}
+.pin-inputs {
+  display: flex; gap: 12px;
+}
+.pin-digit {
+  width: 52px; height: 64px; border-radius: 10px;
+  background: var(--surface2); border: 2px solid var(--border);
+  color: var(--text); font-size: 1.6rem; font-weight: 700; text-align: center;
+  outline: none; transition: border-color .15s;
+  -moz-appearance: textfield;
+}
+.pin-digit:focus { border-color: var(--amber); }
+.pin-digit-error { border-color: var(--red) !important; animation: shake .3s ease; }
+@keyframes shake {
+  0%,100%{transform:translateX(0)} 20%,60%{transform:translateX(-6px)} 40%,80%{transform:translateX(6px)}
+}
+.pin-error {
+  font-size: 0.73rem; color: var(--red); text-align: center; margin: -8px 0;
+}
+.pin-submit {
+  width: 100%; padding: 12px; border-radius: 10px; border: none;
+  background: var(--amber); color: #000; font-size: 0.84rem; font-weight: 700;
+  cursor: pointer; transition: opacity .15s;
+}
+.pin-submit:disabled { opacity: .4; cursor: not-allowed; }
+.pin-submit:not(:disabled):hover { opacity: .88; }
+.pin-hint { font-size: 0.65rem; color: var(--muted); text-align: center; margin-top: -8px; }
+
+/* Admin page extras */
+.admin-pw-input {
+  width: 100%; background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 10px; padding: 10px 14px; color: var(--text);
+  font-size: 0.84rem; font-family: inherit; outline: none; transition: border-color .15s;
+}
+.admin-pw-input:focus { border-color: var(--amber); }

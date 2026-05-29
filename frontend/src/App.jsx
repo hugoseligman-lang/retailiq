@@ -1,20 +1,35 @@
 import { useEffect, useState, useCallback } from "react";
 import { api } from "./api";
-import Onboarding          from "./components/Onboarding";
-import CalibrationWizard   from "./components/CalibrationWizard";
-import StoreStatusBar  from "./components/StoreStatusBar";
-import LiveWidget      from "./components/LiveWidget";
-import LiveFeed        from "./components/LiveFeed";
-import TodayStats      from "./components/TodayStats";
-import HeatmapGrid     from "./components/HeatmapGrid";
-import TrafficChart    from "./components/TrafficChart";
-import InsightsSection from "./components/InsightsSection";
-import DailySummary    from "./components/DailySummary";
-import ChatInterface   from "./components/ChatInterface";
+import Onboarding        from "./components/Onboarding";
+import CalibrationWizard from "./components/CalibrationWizard";
+import StoreStatusBar    from "./components/StoreStatusBar";
+import PinGate           from "./components/PinGate";
+import AdminPage         from "./components/AdminPage";
+import LiveWidget        from "./components/LiveWidget";
+import LiveFeed          from "./components/LiveFeed";
+import TodayStats        from "./components/TodayStats";
+import HeatmapGrid       from "./components/HeatmapGrid";
+import TrafficChart      from "./components/TrafficChart";
+import InsightsSection   from "./components/InsightsSection";
+import DailySummary      from "./components/DailySummary";
+import ChatInterface     from "./components/ChatInterface";
 
 const REFRESH_MS = 30_000;
 
 export default function App() {
+  // /admin route — no PIN needed (has its own password)
+  if (window.location.pathname === "/admin") {
+    return <AdminPage />;
+  }
+
+  return (
+    <PinGate>
+      <Dashboard />
+    </PinGate>
+  );
+}
+
+function Dashboard() {
   // 'loading' | 'connect' | 'setup' | 'dashboard'
   const [appState, setAppState] = useState("loading");
 
@@ -35,9 +50,9 @@ export default function App() {
   const [insights, setInsights] = useState(null);
   const [summary,  setSummary]  = useState(null);
   const [weather,  setWeather]  = useState(null);
-  const [online,      setOnline]      = useState(false);
-  const [store,       setStore]       = useState("RetailIQ");
-  const [showCalib,   setShowCalib]   = useState(false);
+  const [online,     setOnline]     = useState(false);
+  const [store,      setStore]      = useState("RetailIQ");
+  const [showCalib,  setShowCalib]  = useState(false);
 
   const refresh = useCallback(async () => {
     try {

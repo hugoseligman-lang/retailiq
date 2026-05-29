@@ -9,8 +9,8 @@ STORE_LON       = float(os.getenv("STORE_LON", "151.2093"))
 STORE_TIMEZONE  = os.getenv("STORE_TIMEZONE", "Australia/Sydney")
 STORE_STATE     = os.getenv("STORE_STATE", "NSW")
 
-GOOGLE_VISION_API_KEY = os.environ["GOOGLE_VISION_API_KEY"]
-ANTHROPIC_API_KEY     = os.environ["ANTHROPIC_API_KEY"]
+GOOGLE_VISION_API_KEY = os.getenv("GOOGLE_VISION_API_KEY", "")
+ANTHROPIC_API_KEY     = os.getenv("ANTHROPIC_API_KEY", "")
 CLAUDE_MODEL          = "claude-sonnet-4-5"
 
 CAMERA_MODE   = os.getenv("CAMERA_MODE", "webcam")
@@ -29,6 +29,8 @@ DAY_END_TIME = os.getenv("DAY_END_TIME", "18:00")
 FLASK_HOST = os.getenv("FLASK_HOST", "0.0.0.0")
 FLASK_PORT = int(os.getenv("FLASK_PORT", "5050"))
 
-BRIDGE_SECRET = os.getenv("BRIDGE_SECRET", "")
+BRIDGE_SECRET    = os.getenv("BRIDGE_SECRET", "")
+DASHBOARD_PIN    = os.getenv("DASHBOARD_PIN", "")      # 4-digit PIN; empty = no PIN required
+ADMIN_PASSWORD   = os.getenv("ADMIN_PASSWORD", "admin")
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "retailiq.db")

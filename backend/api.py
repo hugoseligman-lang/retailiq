@@ -1,6 +1,8 @@
 import base64
 import json
 import os
+import signal
+import sys
 import threading
 import time
 import requests as req
@@ -17,7 +19,10 @@ import scene_analysis as scene_ai
 import arlo_camera as arlo_cam
 import tracker
 import frame_buffer
-from config import STORE_NAME, BRIDGE_SECRET
+from config import STORE_NAME, BRIDGE_SECRET, DASHBOARD_PIN, ADMIN_PASSWORD, CAMERA_MODE
+
+# Session token — regenerated on each restart; 7-day clients re-auth automatically
+_SESSION_TOKEN = os.urandom(24).hex()
 
 app = Flask(__name__)
 CORS(app)
@@ -564,6 +569,127 @@ def store_close():
     except Exception as e:
         print(f"[store/close] daily summary error: {e}")
     return jsonify({"ok": True, "status": "closed", "closed_at": now})
+
+
+# ── Dashboard PIN authentication ─────────────────────────────────────────────
+
+@app.route("/api/auth/required")
+def auth_required():
+    """Returns whether the dashboard requires a PIN to view."""
+    return jsonify({"pin_required": bool(DASHBOARD_PIN)})
+
+
+@app.route("/api/auth/pin", methods=["POST"])
+def auth_pin():
+    """Validate a 4-digit PIN and return a session token on success."""
+    body = request.get_json(force=True) or {}
+    pin  = str(body.get("pin", "")).strip()
+    if not DASHBOARD_PIN or pin == DASHBOARD_PIN:
+        return jsonify({"ok": True, "token": _SESSION_TOKEN})
+    return jsonify({"ok": False, "error": "Incorrect PIN"}), 401
+
+
+@app.route("/api/auth/verify")
+def auth_verify():
+    """Check whether a stored session token is still valid."""
+    token = request.headers.get("X-Session-Token", "")
+    return jsonify({"ok": token == _SESSION_TOKEN or not DASHBOARD_PIN})
+
+
+# ── Admin endpoints ───────────────────────────────────────────────────────────
+
+def _require_admin():
+    """Returns None if auth OK, else a Flask response with 403."""
+    pw = request.headers.get("X-Admin-Password", "")
+    if pw != ADMIN_PASSWORD:
+        return jsonify({"error": "Forbidden"}), 403
+    return None
+
+
+@app.route("/api/admin/status")
+def admin_status():
+    err = _require_admin()
+    if err:
+        return err
+    counts = tracker.get_counts()
+    fresh  = frame_buffer.is_fresh(max_age=60)
+    age    = frame_buffer.age_seconds()
+    return jsonify({
+        "tracker_running":  counts["running"],
+        "counting_active":  counts["counting_active"],
+        "camera_mode":      CAMERA_MODE,
+        "frame_fresh":      fresh,
+        "frame_age_seconds": round(age, 1) if age != float("inf") else None,
+        "in_store":         counts["in_store"],
+        "entries_today":    counts["entries"],
+        "server_time":      datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    })
+
+
+@app.route("/api/admin/pause", methods=["POST"])
+def admin_pause():
+    err = _require_admin()
+    if err:
+        return err
+    tracker.pause_counting()
+    return jsonify({"ok": True, "counting_active": False})
+
+
+@app.route("/api/admin/resume", methods=["POST"])
+def admin_resume():
+    err = _require_admin()
+    if err:
+        return err
+    tracker.resume_counting()
+    return jsonify({"ok": True, "counting_active": True})
+
+
+@app.route("/api/admin/restart", methods=["POST"])
+def admin_restart():
+    """Send SIGTERM — systemd will restart the process automatically."""
+    err = _require_admin()
+    if err:
+        return err
+
+    def _do():
+        time.sleep(0.6)
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    threading.Thread(target=_do, daemon=True).start()
+    return jsonify({"ok": True, "message": "Restarting…"})
+
+
+@app.route("/api/admin/camera", methods=["GET", "POST"])
+def admin_camera():
+    """GET: return current camera config. POST: update .env and restart."""
+    err = _require_admin()
+    if err:
+        return err
+
+    if request.method == "GET":
+        from config import CAMERA_SOURCE
+        return jsonify({
+            "camera_mode":   CAMERA_MODE,
+            "camera_source": str(CAMERA_SOURCE),
+        })
+
+    body = request.get_json(force=True) or {}
+    env_path = os.path.join(os.path.dirname(__file__), ".env")
+    try:
+        from dotenv import set_key
+        if "camera_mode" in body:
+            set_key(env_path, "CAMERA_MODE",   str(body["camera_mode"]))
+        if "camera_source" in body:
+            set_key(env_path, "CAMERA_SOURCE", str(body["camera_source"]))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    def _do():
+        time.sleep(0.6)
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    threading.Thread(target=_do, daemon=True).start()
+    return jsonify({"ok": True, "restarting": True})
 
 
 # ── Arlo camera auth ──────────────────────────────────────────────────────
