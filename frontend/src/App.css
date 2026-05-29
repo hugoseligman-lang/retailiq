@@ -997,3 +997,32 @@ body { font-family: "Inter", system-ui, sans-serif; background: var(--bg); color
   font-size: 0.84rem; font-family: inherit; outline: none; transition: border-color .15s;
 }
 .admin-pw-input:focus { border-color: var(--amber); }
+
+/* ── Multi-camera status panel ───────────────────────────────────────────── */
+.cam-status-wrap   { margin-bottom: 18px; }
+.cam-status-header { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.cam-status-title  { font-size: 0.65rem; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: var(--amber); }
+.cam-status-badge  { font-size: 0.65rem; font-weight: 700; padding: 2px 8px; border-radius: 6px; }
+.cam-badge-ok      { background: rgba(16,185,129,.12); color: var(--green); border: 1px solid rgba(16,185,129,.3); }
+.cam-badge-warn    { background: rgba(239,68,68,.10);  color: var(--red);   border: 1px solid rgba(239,68,68,.25); }
+.cam-status-updated { font-size: 0.65rem; color: var(--muted); margin-left: auto; }
+
+.cam-status-grid   { display: flex; gap: 12px; flex-wrap: wrap; }
+
+.cam-card { flex: 1; min-width: 160px; border-radius: 10px; padding: 12px 14px;
+            border: 1px solid var(--border); background: var(--surface); }
+.cam-card-ok   { border-color: rgba(16,185,129,.3); }
+.cam-card-dead { border-color: rgba(239,68,68,.3); opacity: .75; }
+
+.cam-card-header { display: flex; align-items: center; gap: 7px; margin-bottom: 6px; }
+.cam-dot         { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.cam-dot-ok      { background: var(--green); box-shadow: 0 0 5px var(--green); animation: pulse 2s ease-in-out infinite; }
+.cam-dot-dead    { background: var(--red); }
+.cam-card-name   { font-size: 0.72rem; font-weight: 700; color: var(--text); flex: 1; }
+.cam-card-mode   { font-size: 0.58rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.cam-card-age    { font-size: 0.68rem; color: var(--muted); margin-bottom: 8px; }
+
+.cam-card-counts { display: flex; gap: 12px; }
+.cam-stat        { display: flex; flex-direction: column; gap: 2px; }
+.cam-stat-lbl    { font-size: 0.58rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.cam-stat-val    { font-size: 1.1rem; font-weight: 800; color: var(--text); line-height: 1; }

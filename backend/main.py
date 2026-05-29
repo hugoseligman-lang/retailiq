@@ -12,6 +12,7 @@ import database as db
 import detector
 import ai_insights
 import daily_summary
+import alerting
 from api import app
 from config import FLASK_HOST, FLASK_PORT, DAY_END_TIME
 
@@ -61,6 +62,9 @@ if __name__ == "__main__":
     print("[main] Starting scheduler (insights + summary)...")
     t = threading.Thread(target=_scheduler, daemon=True)
     t.start()
+
+    print("[main] Starting camera watchdog (email alerts)...")
+    alerting.start()
 
     print(f"[main] API server -> http://{FLASK_HOST}:{FLASK_PORT}")
     app.run(host=FLASK_HOST, port=FLASK_PORT, debug=False, use_reloader=False)

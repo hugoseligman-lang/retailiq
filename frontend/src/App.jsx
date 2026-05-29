@@ -3,6 +3,7 @@ import { api } from "./api";
 import Onboarding        from "./components/Onboarding";
 import CalibrationWizard from "./components/CalibrationWizard";
 import StoreStatusBar    from "./components/StoreStatusBar";
+import CameraStatus      from "./components/CameraStatus";
 import PinGate           from "./components/PinGate";
 import AdminPage         from "./components/AdminPage";
 import LiveWidget        from "./components/LiveWidget";
@@ -130,6 +131,7 @@ function Dashboard() {
             <div className="section-title">Section 1 — Live &amp; Raw Data</div>
           </div>
 
+          <CameraStatus />
           <LiveFeed />
           <LiveWidget live={live} weather={weather} />
           <TodayStats stats={today} />

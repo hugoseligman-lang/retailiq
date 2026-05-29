@@ -19,6 +19,7 @@ import scene_analysis as scene_ai
 import arlo_camera as arlo_cam
 import tracker
 import frame_buffer
+import multi_tracker
 from config import STORE_NAME, BRIDGE_SECRET, DASHBOARD_PIN, ADMIN_PASSWORD, CAMERA_MODE
 
 # Session token — regenerated on each restart; 7-day clients re-auth automatically
@@ -457,6 +458,9 @@ def video_stream():
 @app.route("/api/tracker/counts")
 def tracker_counts():
     tracker.start()
+    mc = multi_tracker.merged_counts()
+    if mc:
+        return jsonify(mc)
     return jsonify(tracker.get_counts())
 
 
@@ -493,10 +497,73 @@ def staff_count():
     return jsonify({"staff_in_store": tracker.get_staff_count()})
 
 
+# ── Multi-camera tracker endpoints ───────────────────────────────────────────
+
+@app.route("/api/tracker/merged")
+def tracker_merged():
+    """Aggregate counts across all active cameras (front+back entries, pos queue)."""
+    mc = multi_tracker.merged_counts()
+    if not mc:
+        # No multi-camera feeds yet — fall back to single-camera tracker
+        return jsonify(tracker.get_counts())
+    return jsonify(mc)
+
+
+@app.route("/api/tracker/counts/<role>")
+def tracker_counts_role(role):
+    """Per-camera counts (front / back / pos)."""
+    t = multi_tracker.all_trackers().get(role)
+    if not t:
+        return jsonify({"error": f"No tracker for camera '{role}'"}), 404
+    return jsonify(t.get_counts())
+
+
+@app.route("/api/cameras/status")
+def cameras_status():
+    """Live status of all camera feeds — frame age, freshness, counts."""
+    buf_status  = frame_buffer.camera_status()
+    trackers    = multi_tracker.all_trackers()
+    cameras     = {}
+    for cam, buf in buf_status.items():
+        t = trackers.get(cam)
+        cameras[cam] = {
+            **buf,
+            "counts": t.get_counts() if t else None,
+        }
+    return jsonify({
+        "cameras":         cameras,
+        "total_cameras":   len(cameras),
+        "healthy_cameras": sum(1 for c in cameras.values() if c["fresh"]),
+    })
+
+
+def _multi_mjpeg_generator(role: str):
+    """MJPEG generator for a specific camera role."""
+    while True:
+        t     = multi_tracker.all_trackers().get(role)
+        frame = t.get_frame() if t else None
+        if frame:
+            yield (
+                b"--frame\r\n"
+                b"Content-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"
+            )
+        time.sleep(0.04)
+
+
+@app.route("/api/stream/<role>")
+def video_stream_role(role):
+    """MJPEG stream for a specific camera (front / back / pos)."""
+    return Response(
+        _multi_mjpeg_generator(role),
+        mimetype="multipart/x-mixed-replace; boundary=frame",
+    )
+
+
 # ── VPS frame ingest ─────────────────────────────────────────────────────────
 
-@app.route("/api/ingest-frame", methods=["POST"])
-def ingest_frame():
+@app.route("/api/ingest-frame",          methods=["POST"])
+@app.route("/api/ingest-frame/<camera>", methods=["POST"])
+def ingest_frame(camera=None):
     """
     Receives a JPEG frame from camera_bridge.py running at the store.
     Accepts either:
@@ -525,9 +592,20 @@ def ingest_frame():
     if not jpeg_bytes:
         return jsonify({"error": "Empty frame"}), 400
 
-    frame_buffer.push(jpeg_bytes)
-    tracker.process_frame(jpeg_bytes)
-    return jsonify({"ok": True})
+    # Determine camera role from URL path (/api/ingest-frame/front) or query param
+    camera = request.view_args.get("camera") or request.args.get("camera", "default")
+
+    frame_buffer.push(jpeg_bytes, camera=camera)
+
+    # Multi-camera: route to named CameraTracker; single: legacy tracker
+    if camera in ("front", "back", "pos"):
+        multi_tracker.get(camera).process_frame(jpeg_bytes)
+    elif camera == "default":
+        tracker.process_frame(jpeg_bytes)
+    else:
+        multi_tracker.get(camera).process_frame(jpeg_bytes)
+
+    return jsonify({"ok": True, "camera": camera})
 
 
 # ── Store open / close ───────────────────────────────────────────────────────

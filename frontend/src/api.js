@@ -64,6 +64,8 @@ export const api = {
 
   // Live tracker
   trackerCounts:   ()      => get("/tracker/counts"),
+  trackerMerged:   ()      => get("/tracker/merged"),
+  camerasStatus:   ()      => get("/cameras/status"),
   trackerSetLine:  (y)     => post("/tracker/line", { y }),
   trackerReset:    ()      => post("/tracker/reset", {}),
   streamUrl:       ()      => (base() + "/stream"),
