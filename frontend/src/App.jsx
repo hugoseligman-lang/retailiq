@@ -6,6 +6,7 @@ import StoreStatusBar    from "./components/StoreStatusBar";
 import CameraStatus      from "./components/CameraStatus";
 import PinGate           from "./components/PinGate";
 import AdminPage         from "./components/AdminPage";
+import PhoneCamera       from "./components/PhoneCamera";
 import LiveWidget        from "./components/LiveWidget";
 import LiveFeed          from "./components/LiveFeed";
 import TodayStats        from "./components/TodayStats";
@@ -21,6 +22,15 @@ export default function App() {
   // /admin route — no PIN needed (has its own password)
   if (window.location.pathname === "/admin") {
     return <AdminPage />;
+  }
+
+  // /camera route — phone camera streaming (PIN auth via existing session)
+  if (window.location.pathname === "/camera") {
+    return (
+      <PinGate>
+        <PhoneCamera />
+      </PinGate>
+    );
   }
 
   return (

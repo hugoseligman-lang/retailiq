@@ -565,15 +565,18 @@ def video_stream_role(role):
 @app.route("/api/ingest-frame/<camera>", methods=["POST"])
 def ingest_frame(camera=None):
     """
-    Receives a JPEG frame from camera_bridge.py running at the store.
+    Receives a JPEG frame from camera_bridge.py or the /camera phone page.
     Accepts either:
       - Content-Type: image/jpeg  (raw bytes)
       - Content-Type: application/json  {"frame": "<base64 JPEG>"}
-    Requires X-Bridge-Secret header when BRIDGE_SECRET is configured.
+    Auth (when BRIDGE_SECRET is configured): any one of:
+      - X-Bridge-Secret  matching BRIDGE_SECRET     (camera_bridge scripts)
+      - X-Session-Token  matching current session   (phone /camera page)
     """
     if BRIDGE_SECRET:
-        secret = request.headers.get("X-Bridge-Secret", "")
-        if secret != BRIDGE_SECRET:
+        bridge_ok  = request.headers.get("X-Bridge-Secret", "") == BRIDGE_SECRET
+        session_ok = request.headers.get("X-Session-Token", "") == _SESSION_TOKEN
+        if not bridge_ok and not session_ok:
             return jsonify({"error": "Forbidden"}), 403
 
     ct = request.content_type or ""
