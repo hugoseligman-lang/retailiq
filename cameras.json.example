@@ -1,0 +1,26 @@
+{
+  "_comment": "Copy this file to cameras.json and fill in your camera IPs",
+  "vps_url":       "http://72.61.209.89",
+  "bridge_secret": "REPLACE_WITH_YOUR_BRIDGE_SECRET",
+  "fps":           5,
+  "cameras": {
+    "front": {
+      "name":    "Front Door",
+      "mode":    "rtsp",
+      "source":  "rtsp://CAMERA_1_IP:554/streaming/channels/0",
+      "enabled": true
+    },
+    "back": {
+      "name":    "Back Door",
+      "mode":    "rtsp",
+      "source":  "rtsp://CAMERA_2_IP:554/streaming/channels/0",
+      "enabled": true
+    },
+    "pos": {
+      "name":    "POS / Counter",
+      "mode":    "rtsp",
+      "source":  "rtsp://CAMERA_3_IP:554/streaming/channels/0",
+      "enabled": true
+    }
+  }
+}
