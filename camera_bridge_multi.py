@@ -43,19 +43,19 @@ DEFAULT_CONFIG = {
         "front": {
             "name":    "Front Door",
             "mode":    "rtsp",
-            "source":  "rtsp://CAMERA_1_IP:554/streaming/channels/0",
+            "source":  "rtsp://USERNAME:PASSWORD@CAMERA_1_IP:554/live0",
             "enabled": True
         },
         "back": {
             "name":    "Back Door",
             "mode":    "rtsp",
-            "source":  "rtsp://CAMERA_2_IP:554/streaming/channels/0",
+            "source":  "rtsp://USERNAME:PASSWORD@CAMERA_2_IP:554/live0",
             "enabled": True
         },
         "pos": {
             "name":    "POS / Counter",
             "mode":    "rtsp",
-            "source":  "rtsp://CAMERA_3_IP:554/streaming/channels/0",
+            "source":  "rtsp://USERNAME:PASSWORD@CAMERA_3_IP:554/live0",
             "enabled": True
         }
     }
@@ -93,7 +93,7 @@ def load_config() -> dict:
 # ── Per-camera worker ──────────────────────────────────────────────────────────
 
 class CameraWorker:
-    RECONNECT_DELAY = 30   # seconds before retry after failure
+    RECONNECT_DELAY = 10   # seconds before retry after failure (Eufy sleeps between motion events)
 
     def __init__(self, role: str, camera_cfg: dict, vps_url: str,
                  secret: str, fps: float):
