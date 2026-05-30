@@ -1,155 +1,185 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { api } from "../api";
 
+const ROLES = {
+  front: { label: "Front Door",  icon: "🚪", mode: "crossing" },
+  back:  { label: "Back Door",   icon: "🚪", mode: "crossing" },
+  pos:   { label: "POS Counter", icon: "🛒", mode: "queue"    },
+};
+
 export default function LiveFeed() {
-  const [counts,   setCounts]   = useState(null);
-  const [lineY,    setLineY]    = useState(0.55);
-  const [dragging, setDragging] = useState(false);
-  const imgRef  = useRef(null);
+  const [cameras,  setCameras]  = useState({});   // from /api/cameras/status
+  const [counts,   setCounts]   = useState({});   // merged + per-camera
+  const [lineYs,   setLineYs]   = useState({});   // per-camera line position
+  const [dragging, setDragging] = useState(null); // role being dragged
+
+  const imgRefs = useRef({});
   const pollRef = useRef(null);
 
-  const streamSrc = api.streamUrl();
-
-  const fetchCounts = useCallback(async () => {
+  const refresh = useCallback(async () => {
     try {
-      const c = await api.trackerCounts();
-      setCounts(c);
-      setLineY(c.line_y ?? 0.55);
-    } catch { /* backend offline */ }
+      const [cams, merged] = await Promise.all([
+        api.camerasStatus(),
+        api.trackerMerged().catch(() => ({})),
+      ]);
+      setCameras(cams || {});
+      setCounts(merged || {});
+    } catch { /* offline */ }
   }, []);
 
   useEffect(() => {
-    fetchCounts();
-    pollRef.current = setInterval(fetchCounts, 1500);
+    refresh();
+    pollRef.current = setInterval(refresh, 2000);
     return () => clearInterval(pollRef.current);
-  }, [fetchCounts]);
+  }, [refresh]);
+
+  const activeCameras = Object.entries(cameras).filter(([, c]) => c.fresh);
+  const hasAny        = activeCameras.length > 0;
+
+  const handleLineDrag = useCallback(async (role, e) => {
+    if (dragging !== role) return;
+    const el = imgRefs.current[role];
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const y = Math.max(0.1, Math.min(0.9, (e.clientY - rect.top) / rect.height));
+    setLineYs(prev => ({ ...prev, [role]: y }));
+    try { await api.trackerSetLine(y); } catch { /* ignore */ }
+  }, [dragging]);
 
   const handleReset = async () => {
-    await api.trackerReset();
-    fetchCounts();
+    await api.trackerReset().catch(() => {});
+    refresh();
   };
 
-  const handleStaffIn = async () => {
-    await api.staffIn();
-    fetchCounts();
-  };
-
-  const handleStaffOut = async () => {
-    await api.staffOut();
-    fetchCounts();
-  };
-
-  const handleLineDrag = async (e) => {
-    if (!imgRef.current) return;
-    const rect = imgRef.current.getBoundingClientRect();
-    const y = Math.max(0.1, Math.min(0.9, (e.clientY - rect.top) / rect.height));
-    setLineY(y);
-    await api.trackerSetLine(y);
-  };
-
-  const c          = counts || {};
-  const entries    = c.entries   ?? 0;
-  const exits      = c.exits     ?? 0;
-  const passersby  = c.passersby ?? 0;
-  const inStore    = Math.max(0, c.in_store ?? 0);
-  const staff      = c.staff_in_store ?? 0;
-  const customers  = c.customers_in_store ?? inStore;
-  const conv       = c.conversion_rate ?? 0;
+  if (!hasAny) {
+    return (
+      <div className="livefeed-root livefeed-empty">
+        <div className="livefeed-empty-icon">📷</div>
+        <div className="livefeed-empty-title">No cameras streaming yet</div>
+        <div className="livefeed-empty-sub">
+          Start the Raspberry Pi bridge at the café, or open{" "}
+          <a href="/camera">cafe.meridianai.build/camera</a> on a phone to stream manually.
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="livefeed-root">
-      {/* ── Video stream ──────────────────────────────────────────────── */}
-      <div
-        className="livefeed-video-wrap"
-        onMouseMove={dragging ? handleLineDrag : undefined}
-        onMouseUp={() => setDragging(false)}
-        onMouseLeave={() => setDragging(false)}
-      >
-        <img
-          ref={imgRef}
-          src={streamSrc}
-          alt="Live feed"
-          className="livefeed-img"
-          draggable={false}
-        />
-        <div
-          className="livefeed-line-handle"
-          style={{ top: `${lineY * 100}%` }}
-          onMouseDown={(e) => { e.preventDefault(); setDragging(true); }}
-          title="Drag to move entrance line"
-        />
-        <div className="livefeed-label-enter" style={{ top: `calc(${lineY * 100}% + 14px)` }}>
-          v ENTER
-        </div>
-        <div className="livefeed-label-exit" style={{ top: `calc(${lineY * 100}% - 22px)` }}>
-          ^ EXIT
-        </div>
-        <div className="livefeed-drag-hint">drag line to reposition</div>
+      {/* ── Camera grid ──────────────────────────────────────────────── */}
+      <div className={`livefeed-cam-grid livefeed-cam-grid-${activeCameras.length}`}>
+        {activeCameras.map(([role, cam]) => {
+          const meta   = ROLES[role] || { label: role, icon: "📷", mode: "crossing" };
+          const lineY  = lineYs[role] ?? 0.55;
+          const perCam = counts?.cameras?.[role] || {};
+
+          return (
+            <div key={role} className="livefeed-cam-card">
+              {/* Label bar */}
+              <div className="livefeed-cam-label">
+                <span className="livefeed-cam-dot" />
+                {meta.icon} {meta.label}
+                <span className="livefeed-cam-age">{cam.age_seconds != null ? `${Math.round(cam.age_seconds)}s ago` : ""}</span>
+              </div>
+
+              {/* Stream */}
+              <div
+                className="livefeed-video-wrap"
+                onMouseMove={e => handleLineDrag(role, e)}
+                onMouseUp={() => setDragging(null)}
+                onMouseLeave={() => setDragging(null)}
+              >
+                <img
+                  ref={el => imgRefs.current[role] = el}
+                  src={api.streamUrl(role)}
+                  alt={meta.label}
+                  className="livefeed-img"
+                  draggable={false}
+                />
+
+                {/* Entrance line — door cameras only */}
+                {meta.mode === "crossing" && (
+                  <>
+                    <div
+                      className="livefeed-line-handle"
+                      style={{ top: `${lineY * 100}%` }}
+                      onMouseDown={e => { e.preventDefault(); setDragging(role); }}
+                      title="Drag to set entrance line"
+                    />
+                    <div className="livefeed-label-enter" style={{ top: `calc(${lineY * 100}% + 14px)` }}>▼ ENTER</div>
+                    <div className="livefeed-label-exit"  style={{ top: `calc(${lineY * 100}% - 22px)` }}>▲ EXIT</div>
+                    <div className="livefeed-drag-hint">drag line to reposition</div>
+                  </>
+                )}
+
+                {/* Queue badge — POS camera */}
+                {meta.mode === "queue" && (perCam.queue_length ?? 0) > 0 && (
+                  <div className="livefeed-queue-badge">
+                    🛒 Queue: {perCam.queue_length}
+                  </div>
+                )}
+              </div>
+
+              {/* Per-camera stats */}
+              <div className="livefeed-cam-stats">
+                {meta.mode === "crossing" ? (
+                  <>
+                    <CamStat label="In"    value={perCam.entries   ?? 0} colour="var(--green)" />
+                    <CamStat label="Out"   value={perCam.exits     ?? 0} colour="var(--amber)" />
+                    <CamStat label="Passed" value={perCam.passersby ?? 0} colour="var(--muted)" />
+                    {(perCam.entries ?? 0) + (perCam.passersby ?? 0) > 0 && (
+                      <CamStat
+                        label="Conv."
+                        value={`${Math.round((perCam.entries ?? 0) / ((perCam.entries ?? 0) + (perCam.passersby ?? 0)) * 100)}%`}
+                        colour="var(--blue)"
+                      />
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <CamStat label="Queue Now"    value={perCam.queue_length ?? 0} colour={perCam.queue_length >= 3 ? "var(--red)" : "var(--green)"} />
+                    <CamStat label="Queue Events" value={perCam.queue_events ?? 0} colour="var(--amber)" />
+                  </>
+                )}
+              </div>
+            </div>
+          );
+        })}
       </div>
 
-      {/* ── Stats bar ──────────────────────────────────────────────────── */}
-      <div className="livefeed-stats">
-
-        {/* Customer count — primary metric */}
-        <div className="livefeed-primary">
-          <div className="livefeed-primary-label">Customers In Store</div>
-          <div className="livefeed-primary-value">{customers}</div>
-          {staff > 0 && (
-            <div className="livefeed-primary-sub">
-              {inStore} total &mdash; {staff} staff
-            </div>
-          )}
+      {/* ── Merged totals bar ─────────────────────────────────────────── */}
+      <div className="livefeed-totals-bar">
+        <div className="livefeed-total-item">
+          <span className="livefeed-total-label">Total In Store</span>
+          <span className="livefeed-total-val green">{counts.in_store ?? 0}</span>
         </div>
-
-        <Stat label="Entries"   value={entries}   colour="var(--green)" />
-        <Stat label="Exits"     value={exits}      colour="var(--amber)" />
-        <Stat label="Passersby" value={passersby}  colour="var(--muted)" />
-
-        {/* Conversion rate */}
-        <div className="livefeed-conv">
-          <div className="livefeed-conv-label">Conversion Rate</div>
-          <div className="livefeed-conv-value">{conv}%</div>
-          <div className="livefeed-conv-sub">
-            {entries} of {entries + passersby} visitors
-          </div>
-          <div className="livefeed-conv-bar">
-            <div className="livefeed-conv-fill" style={{ width: `${conv}%` }} />
-          </div>
+        <div className="livefeed-total-item">
+          <span className="livefeed-total-label">Entries Today</span>
+          <span className="livefeed-total-val">{counts.entries ?? 0}</span>
         </div>
-
-        {/* Staff tracking */}
-        <div className="livefeed-staff-panel">
-          <div className="livefeed-staff-label">Staff ({staff} in store)</div>
-          <div className="livefeed-staff-btns">
-            <button className="livefeed-staff-btn livefeed-staff-in"  onClick={handleStaffIn}>
-              + Staff In
-            </button>
-            <button
-              className="livefeed-staff-btn livefeed-staff-out"
-              onClick={handleStaffOut}
-              disabled={staff === 0}
-            >
-              - Staff Out
-            </button>
-          </div>
-          <div className="livefeed-staff-hint">
-            Tap when a staff member arrives or leaves so they&apos;re excluded from the customer count.
-          </div>
+        <div className="livefeed-total-item">
+          <span className="livefeed-total-label">Queue Now</span>
+          <span className="livefeed-total-val amber">{counts.queue_length ?? 0}</span>
         </div>
-
-        <button className="livefeed-reset-btn" onClick={handleReset}>
-          Reset counts
-        </button>
+        <div className="livefeed-total-item">
+          <span className="livefeed-total-label">Conversion</span>
+          <span className="livefeed-total-val blue">
+            {counts.entries + counts.passersby > 0
+              ? `${Math.round(counts.entries / (counts.entries + counts.passersby) * 100)}%`
+              : "—"}
+          </span>
+        </div>
+        <button className="livefeed-reset-btn" onClick={handleReset}>Reset counts</button>
       </div>
     </div>
   );
 }
 
-function Stat({ label, value, colour }) {
+function CamStat({ label, value, colour }) {
   return (
-    <div className="livefeed-stat">
-      <div className="livefeed-stat-label">{label}</div>
-      <div className="livefeed-stat-value" style={{ color: colour }}>{value}</div>
+    <div className="livefeed-cam-stat">
+      <div className="livefeed-cam-stat-label">{label}</div>
+      <div className="livefeed-cam-stat-val" style={{ color: colour }}>{value}</div>
     </div>
   );
 }

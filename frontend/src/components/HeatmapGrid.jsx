@@ -1,60 +1,97 @@
 import { useState, useEffect } from "react";
 import { api } from "../api";
 
-function heatColor(pct) {
-  // 0% → cold blue, 100% → hot red
-  if (pct < 20) return { bg: "rgba(59,130,246,0.25)", border: "rgba(59,130,246,0.4)" };
-  if (pct < 40) return { bg: "rgba(16,185,129,0.25)", border: "rgba(16,185,129,0.4)" };
-  if (pct < 60) return { bg: "rgba(245,158,11,0.25)", border: "rgba(245,158,11,0.4)" };
-  if (pct < 80) return { bg: "rgba(249,115,22,0.3)",  border: "rgba(249,115,22,0.5)" };
-  return { bg: "rgba(239,68,68,0.35)", border: "rgba(239,68,68,0.55)" };
-}
-
+/**
+ * CafeActivity — replaces the generic Left/Centre/Right heatmap.
+ * Shows café-relevant metrics: door traffic vs POS queue activity by hour.
+ */
 export default function HeatmapGrid() {
-  const [period, setPeriod] = useState("today");
-  const [data, setData]     = useState(null);
+  const [period,  setPeriod]  = useState("today");
+  const [traffic, setTraffic] = useState(null);
+  const [cameras, setCameras] = useState({});
 
   useEffect(() => {
-    api.heatmap(period).then(setData).catch(() => {});
+    api.heatmap(period).then(setTraffic).catch(() => {});
+    api.camerasStatus().then(setCameras).catch(() => {});
   }, [period]);
 
-  const left   = Number(data?.left_total   || 0);
-  const center = Number(data?.center_total || 0);
-  const right  = Number(data?.right_total  || 0);
-  const total  = left + center + right || 1;
+  const hourly = traffic?.hourly || [];
+  const maxVal = Math.max(...hourly.map(h => h.avg_count || 0), 1);
 
-  const zones = [
-    { name: "Left Zone",   val: left,   pct: Math.round(left   / total * 100) },
-    { name: "Centre Zone", val: center, pct: Math.round(center / total * 100) },
-    { name: "Right Zone",  val: right,  pct: Math.round(right  / total * 100) },
-  ];
+  // Per-camera totals from camera status
+  const frontCam = cameras.front || {};
+  const posCam   = cameras.pos   || {};
 
   return (
-    <div className="card">
-      <div className="section-header" style={{ marginBottom: 0 }}>
-        <div className="card-label" style={{ marginBottom: 0 }}>Zone Heatmap</div>
+    <div className="card cafe-activity-card">
+      <div className="section-header" style={{ marginBottom: 12 }}>
+        <div className="card-label" style={{ marginBottom: 0 }}>Store Activity</div>
         <div className="heatmap-toggle">
-          {["today", "week", "month"].map(p => (
-            <button key={p} className={`toggle-btn ${period === p ? "active" : ""}`}
-              onClick={() => setPeriod(p)}>
-              {p === "today" ? "Today" : p === "week" ? "7 Days" : "30 Days"}
+          {["today","week","month"].map(p => (
+            <button key={p} className={`toggle-btn ${period===p?"active":""}`} onClick={() => setPeriod(p)}>
+              {p==="today" ? "Today" : p==="week" ? "7 Days" : "30 Days"}
             </button>
           ))}
         </div>
       </div>
-      <div className="heatmap-grid">
-        {zones.map(z => {
-          const col = heatColor(z.pct);
-          return (
-            <div key={z.name} className="heatmap-cell"
-              style={{ background: col.bg, border: `1px solid ${col.border}` }}>
-              <div className="heatmap-cell-name">{z.name}</div>
-              <div className="heatmap-cell-val">{z.val.toLocaleString()}</div>
-              <div className="heatmap-cell-pct">{z.pct}% of traffic</div>
-            </div>
-          );
-        })}
+
+      {/* ── Zone summary cards ── */}
+      <div className="cafe-zone-row">
+        <div className="cafe-zone-card">
+          <div className="cafe-zone-icon">🚪</div>
+          <div className="cafe-zone-name">Front Door</div>
+          <div className="cafe-zone-stat">
+            <span className="cafe-zone-val green">{frontCam.entries ?? "—"}</span>
+            <span className="cafe-zone-sub">entries</span>
+          </div>
+          <div className="cafe-zone-stat">
+            <span className="cafe-zone-val amber">{frontCam.exits ?? "—"}</span>
+            <span className="cafe-zone-sub">exits</span>
+          </div>
+          <div className={`cafe-zone-status ${frontCam.fresh ? "live" : "offline"}`}>
+            {frontCam.fresh ? "● live" : "○ offline"}
+          </div>
+        </div>
+
+        <div className="cafe-zone-card">
+          <div className="cafe-zone-icon">🛒</div>
+          <div className="cafe-zone-name">POS Counter</div>
+          <div className="cafe-zone-stat">
+            <span className="cafe-zone-val" style={{ color: (posCam.queue_length ?? 0) >= 3 ? "var(--red)" : "var(--green)" }}>
+              {posCam.queue_length ?? "—"}
+            </span>
+            <span className="cafe-zone-sub">queuing now</span>
+          </div>
+          <div className="cafe-zone-stat">
+            <span className="cafe-zone-val amber">{posCam.queue_events ?? "—"}</span>
+            <span className="cafe-zone-sub">queue events</span>
+          </div>
+          <div className={`cafe-zone-status ${posCam.fresh ? "live" : "offline"}`}>
+            {posCam.fresh ? "● live" : "○ offline"}
+          </div>
+        </div>
       </div>
+
+      {/* ── Hourly traffic bar chart ── */}
+      {hourly.length > 0 && (
+        <div className="cafe-hourly-wrap">
+          <div className="cafe-hourly-label">Traffic by Hour</div>
+          <div className="cafe-hourly-bars">
+            {hourly.map((h, i) => {
+              const pct = Math.round((h.avg_count / maxVal) * 100);
+              const isNow = new Date().getHours() === parseInt(h.hour);
+              return (
+                <div key={i} className={`cafe-hour-col ${isNow ? "now" : ""}`} title={`${h.hour}:00 — avg ${h.avg_count?.toFixed(1)} people`}>
+                  <div className="cafe-hour-bar-wrap">
+                    <div className="cafe-hour-bar" style={{ height: `${Math.max(pct, 2)}%` }} />
+                  </div>
+                  {i % 3 === 0 && <div className="cafe-hour-tick">{h.hour}</div>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

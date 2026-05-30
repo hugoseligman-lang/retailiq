@@ -68,7 +68,7 @@ export const api = {
   camerasStatus:   ()      => get("/cameras/status"),
   trackerSetLine:  (y)     => post("/tracker/line", { y }),
   trackerReset:    ()      => post("/tracker/reset", {}),
-  streamUrl:       ()      => (base() + "/stream"),
+  streamUrl:       (role)  => role ? (base() + `/stream/${role}`) : (base() + "/stream"),
 
   // Staff check-in / check-out
   staffIn:         ()      => post("/staff/in",  {}),
